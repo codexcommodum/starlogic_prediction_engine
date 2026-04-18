@@ -1,7 +1,7 @@
 """
 Starlogic Prediction Engine — Orchestrator Service
-Calls Hellenistic + ZWDS engines, runs 7-layer computation, scores convergence,
-calls Claude for Layer 8 narrative. ONE endpoint, ONE call from frontend.
+Calls Hellenistic + ZWDS engines, runs 7-layer computation, scores convergence.
+Returns pre-scored signals. LLM narrative handled by frontend (Base44 InvokeLLM).
 """
 
 import os
@@ -15,7 +15,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-import anthropic
 
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -364,20 +363,24 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
     for a in annuals:
         if a.get("age") == age or a.get("year") == year:
             palace_name = a.get("palace_name_english", "")
-            stars_raw = a.get("stars_english", a.get("stars", ""))
-            if isinstance(stars_raw, str):
-                star_list = [s.strip() for s in stars_raw.split() if s.strip()]
+            # Parse stars - pinyin is reliable (underscore-separated names, space between stars)
+            stars_pinyin_raw = a.get("stars", "")
+            if isinstance(stars_pinyin_raw, str):
+                pinyin_list = [s.strip() for s in stars_pinyin_raw.split() if s.strip()]
             else:
-                star_list = stars_raw if stars_raw else []
+                pinyin_list = stars_pinyin_raw if stars_pinyin_raw else []
+
+            # Map pinyin to English from our star database
+            PINYIN_TO_ENGLISH = {k: v.get("Life","").split(",")[0].strip() for k,v in STAR_PALACE_EFFECTS.items()}
+            PINYIN_TO_ENGLISH.update({"zi_wei":"Purple Star Emperor","tian_ji":"Heavenly Mechanism","tai_yang":"Sun",
+                "wu_qu":"Military Wealth","tian_tong":"Heavenly Unity","lian_zhen":"Chastity",
+                "tian_fu":"Celestial Vault","tai_yin":"Moon","tan_lang":"Greedy Wolf",
+                "ju_men":"Giant Gate","tian_xiang":"Heavenly Minister","tian_liang":"Celestial Beam",
+                "qi_sha":"Seven Killings","po_jun":"Army Breaker"})
+            star_list = [PINYIN_TO_ENGLISH.get(sp, sp) for sp in pinyin_list]
 
             # Get star-palace specific effects
             star_effects = []
-            stars_pinyin = a.get("stars", "")
-            if isinstance(stars_pinyin, str):
-                pinyin_list = [s.strip() for s in stars_pinyin.split() if s.strip()]
-            else:
-                pinyin_list = stars_pinyin if stars_pinyin else []
-
             for sp in pinyin_list:
                 effects = STAR_PALACE_EFFECTS.get(sp, {})
                 effect_text = effects.get(palace_name, "")
@@ -393,7 +396,7 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
                 "stars_pinyin": pinyin_list,
                 "star_palace_effects": star_effects,
                 "palace_themes": PALACE_THEMES.get(palace_name, {}),
-                "is_empty": len(star_list) == 0,
+                "is_empty": len(pinyin_list) == 0,
             }
 
     return {"year": year, "age": age, "palace_name": "", "stars_english": [], "star_palace_effects": [], "palace_themes": {}, "is_empty": True}
@@ -412,17 +415,18 @@ def compute_decade_palace(age: int, zwds: dict) -> dict:
         end = d.get("end_age", 0)
         if start <= age <= end:
             palace_name = d.get("palace_name_english", "")
-            stars_raw = d.get("stars_english", d.get("stars", ""))
-            if isinstance(stars_raw, str):
-                star_list = [s.strip() for s in stars_raw.split() if s.strip()]
+            stars_pinyin_raw = d.get("stars", "")
+            if isinstance(stars_pinyin_raw, str):
+                pinyin_list = [s.strip() for s in stars_pinyin_raw.split() if s.strip()]
             else:
-                star_list = stars_raw if stars_raw else []
+                pinyin_list = stars_pinyin_raw if stars_pinyin_raw else []
 
-            stars_pinyin = d.get("stars", "")
-            if isinstance(stars_pinyin, str):
-                pinyin_list = [s.strip() for s in stars_pinyin.split() if s.strip()]
-            else:
-                pinyin_list = stars_pinyin if stars_pinyin else []
+            PINYIN_TO_ENGLISH = {"zi_wei":"Purple Star Emperor","tian_ji":"Heavenly Mechanism","tai_yang":"Sun",
+                "wu_qu":"Military Wealth","tian_tong":"Heavenly Unity","lian_zhen":"Chastity",
+                "tian_fu":"Celestial Vault","tai_yin":"Moon","tan_lang":"Greedy Wolf",
+                "ju_men":"Giant Gate","tian_xiang":"Heavenly Minister","tian_liang":"Celestial Beam",
+                "qi_sha":"Seven Killings","po_jun":"Army Breaker"}
+            star_list = [PINYIN_TO_ENGLISH.get(sp, sp) for sp in pinyin_list]
 
             star_effects = []
             for sp in pinyin_list:
@@ -689,32 +693,158 @@ def estimate_longevity(hellenistic: dict, zwds: dict) -> int:
 # ═══════════════════════════════════════════════════════════
 
 def build_llm_prompt(all_years: list, nayin_data: dict, longevity: int) -> str:
-    """Build ONE prompt with all pre-computed signals for all years."""
+    """Build ONE prompt: full interpretation engine + per-year signals."""
 
-    header = f"""You are the Starlogic Prediction Engine translating pre-computed chart signals into life predictions.
+    engine_framework = f"""You are the Starlogic Prediction Engine. You receive pre-computed astrological signals and translate them into life predictions using the interpretation framework below. Follow it exactly.
 
-PERSON'S SOUL ELEMENT: {nayin_data.get('english_name', '')} ({nayin_data.get('element', '')})
+═══ PERSON'S FOUNDATION ═══
+Soul Element: {nayin_data.get('english_name', '')} ({nayin_data.get('element', '')})
 Properties: visibility={nayin_data.get('properties', {}).get('visibility', '')}, strength={nayin_data.get('properties', {}).get('strength', '')}, recognition={nayin_data.get('properties', {}).get('recognition', '')}
-This is the foundation — everything delivers through this lens.
 Projected lifespan: {longevity} years.
 
-RULES:
-- Each age gets exactly 3 bullets (4 max for HIGH convergence years)
+═══ LAYER 1: NAYIN — THE OPERATING SYSTEM (FOUNDATION) ═══
+The nayin is NOT a modifier. It IS the foundation through which every prediction delivers.
+
+Visibility types:
+- hidden/buried/low/dim = results build unseen, surface later
+- exposed/prominent/explosive/supreme = results immediately visible
+- subtle/worn/surface = results show gradually through observation
+- emerging/fruiting = results arrive at predictable moments
+
+Strength types:
+- enduring/rooted/load_bearing/vast = survives hostile years intact
+- fragile/unstable/thin = hostile years cause real damage
+- sharp/explosive/rushing/overwhelming = acts with force when triggered
+- flowing/flexible/practical = adapts rather than resists
+- latent/smoldering = waits, then activates suddenly
+
+Recognition types:
+- delayed_then_sudden = invisible compound progress, then breakthrough
+- immediate_threat/unavoidable = instant visible impact
+- earned/crafted = recognition comes through effort
+- divine/cosmic/overwhelming = larger-than-life arrival
+- overlooked/common/uncertain = often missed by others
+
+Element Interaction (composite_support score):
+- PRODUCES (+1.0): environment feeds you. Supportive year, external conditions favor growth.
+- SAME (+0.8): environment resonates. Core self reinforced. Familiar territory.
+- CONTROLLED_BY (+0.6): you control environment. Person shapes circumstances.
+- NEUTRAL (0.0): no elemental interaction.
+- PRODUCED_BY (-0.5): you feed environment. Giving more than receiving. Draining.
+- CONTROLS (-0.8): environment attacks you. Hostile. External forces reshape you.
+
+Thresholds:
+- composite_support > 0.5 → favorable year, things flow
+- composite_support 0 to 0.5 → mildly supportive
+- composite_support -0.3 to 0 → mildly draining
+- composite_support < -0.5 → hostile, resistance everywhere
+
+BIRTH_STEM_RETURN = personal will reasserts this year
+JIAZI_RETURN = 60-year cycle reset, complete life chapter reset
+
+═══ LAYER 2: PROFECTION — THE LOUDEST ANNUAL TRIGGER ═══
+The profected house tells you WHAT DOMAIN activates.
+The lord's natal dignity tells you QUALITY of delivery.
+The lord's natal house tells you which OTHER domain colors this year.
+
+Dignity effects:
+- EXALTATION (1.0) = delivers MORE than expected, peak performance
+- DOMICILE (0.9) = functions naturally and powerfully
+- TRIPLICITY (0.6) = supported but not dominant
+- PEREGRINE (0.15) = wandering, unfocused, no inherent support
+- FALL (0.1) = promises that disappoint, expansion that contracts
+- DETRIMENT (0.05) = works against its nature, frustration
+
+House themes (what domain is activated):
+- H1 self/body/identity/appearance
+- H2 money/possessions/earning/values
+- H3 communication/siblings/learning/short_travel
+- H4 home/family/father/real_estate/foundation
+- H5 children/creativity/pleasure/romance/speculation
+- H6 health/work/daily_routine/service/illness
+- H7 partnerships/marriage/open_enemies/contracts
+- H8 transformation/shared_resources/inheritance/hidden_wealth/death_rebirth
+- H9 higher_education/travel/philosophy/legal/foreign
+- H10 career/public_reputation/authority/achievement
+- H11 friends/allies/community/networks/hopes
+- H12 isolation/hidden_enemies/self_undoing/endings/secrets
+
+Derivation: "H{{profection}} activated, lord in H{{lord_house}} = {{house_themes}} colored by {{lord_house_themes}}, delivered at {{dignity_quality}}."
+
+═══ LAYER 3: ASPECT ACTIVATION (BROADCAST SIGNALS) ═══
+When the profection lord has tight natal aspects (orb under 3°), those aspects FIRE this year.
+Tighter orb = stronger signal. Sect light involvement = disproportionate significance.
+
+Aspect meanings:
+- CONJUNCTION: fused energy, amplification, planets function as one
+- SQUARE: tension, conflict, forced action, crisis
+- TRINE: natural flow, support, ease, talent expressed
+- SEXTILE: opportunity, cooperation, moderate support
+- OPPOSITION: polarity, confrontation, projection onto others
+
+When sect light is activated, the year carries MAJOR weight.
+
+═══ LAYER 4: ANNUAL PALACE + STARS (FOREGROUND EVENT) ═══
+The annual palace is WHAT specifically happens. Stars in that palace are the SPECIFIC manifestation.
+Star-in-palace effects are the MOST SPECIFIC signal available. Trust them as the primary event prediction.
+
+Examples of star-palace specificity:
+- Zi Wei in Fortune = "FATE INTERVENES, destiny-level event, life redirect"
+- Tian Fu in Wealth = "VAULT OPENS, structured accumulation, financial security achieved"
+- Po Jun in Travel = "dramatic relocations, permanent departures"
+- Qi Sha in Fortune = "fate pivot through destruction, what's destroyed makes room for destiny"
+- Po Jun in Spouse = "partnership demolished and rebuilt, revolutionary union"
+- Tan Lang in Career = "entertainment/sales/marketing, charisma-driven work"
+- Ju Men in Siblings = "verbal competition, debate-oriented dynamics"
+- Tian Liang in Health = "longevity, recovery from illness, protection from fate"
+
+Empty palace = themes present but without strong specific expression.
+
+═══ LAYER 5: DECADE PALACE (BACKGROUND THEME) ═══
+Sets the ~10-year backdrop. Every year within plays against this backdrop.
+- TRANSITION_IN (first year) = decade energy arriving
+- MID_DECADE = peak expression of decade theme
+- TRANSITION_OUT (last year) = decade energy leaving, closing chapter
+
+═══ LAYER 6: STEM-BRANCH ENVIRONMENT ═══
+Year's elemental air. Modifies everything else.
+- internal harmony PRODUCES/SAME = year has internal coherence
+- internal harmony CONTROLS = year has internal tension
+- branch_to_life_palace shows how year relates to core identity
+
+═══ LAYER 7: CYCLE PATTERNS ═══
+- LORD_RETURN: cycle_number 1=introduction, 2=adolescent_expression, 3=adult_mastery, 4=elder_wisdom
+- CONSECUTIVE_LORD: prolonged single influence, malefic double = extended trial, benefic double = extended blessing
+- ANNUAL_MEETS_DECADE: DOUBLE ACTIVATION, peak intensity for that domain in entire decade
+- DOUBLE_RESET: decade + profection reset simultaneously = major life chapter change
+
+═══ CONVERGENCE CONFIDENCE ═══
+HIGH (3+ layer sources): bold specific prediction, this WILL happen
+MEDIUM (2 sources): moderate claim, likely theme
+LOW (1 source): mild/background, mention only if it fits the narrative
+Conflicting signals: the TENSION itself is the prediction
+
+═══ AGE-APPROPRIATE LANGUAGE ═══
+- 0-5: family/caretaker events child experiences passively (parent's job change, family moves, caretaker health, family conflict)
+- 6-12: school events, peer friendships, family changes affecting child, early interests
+- 13-17: peer dynamics, identity formation, school transitions, early independence, first relationships
+- 18-25: education decisions, first career steps, romantic relationships, independence from family
+- 26-35: career building, marriage/partnership, first property, first children, financial foundations
+- 36-50: career peak or pivot, wealth management, parenting teens, partnership maturity, legacy thinking
+- 50+: consolidation, health focus, mentorship, wealth preservation, meaning-making
+
+═══ OUTPUT RULES ═══
+For EACH year:
+- Exactly 3 bullets (4 max for HIGH convergence years with major events)
 - Each bullet ONE sentence under 15 words
 - SPECIFIC and FALSIFIABLE — testable against real events
-- Prefer concrete nouns: "property purchase" not "material expansion"
-- No explanations, no logic, no filler, no advice, no astrology terms
-- Age 0-5: family events child experiences passively
-- Age 6-12: school, social, family events
-- Age 13-17: peers, identity, independence
-- Age 18-25: education, career start, relationships
-- Age 26-35: career building, partnerships, property, children
-- Age 36-50: career peak, legacy, wealth management
-- HIGH confidence domains get bold specific predictions
-- MEDIUM gets moderate claims
-- Conflicting signals = the TENSION is the prediction
+- Use concrete nouns: "property purchase" not "material expansion", "job change" not "career transition"
+- Never mention astrology terms, mechanics, layers, dignities, or signal codes
+- Never say "you may", "could", "might" — make real predictions
+- HIGH confidence + specific stars = bold concrete claims
+- Deliver predictions through the person's nayin lens (hidden = invisible buildup, exposed = public events)
 
-YEAR-BY-YEAR SIGNALS:
+═══ YEAR-BY-YEAR SIGNALS (THE DATA) ═══
 """
 
     year_blocks = []
@@ -727,48 +857,32 @@ YEAR-BY-YEAR SIGNALS:
         decade = yd["decade"]
         aspects = yd["aspects"]
         stem_branch = yd["stem_branch"]
-        cycles = yd["cycles"]
-        convergence = yd["convergence"]
+        cycles = yd.get("cycles", [])
+        convergence = yd.get("convergence", {"top_domains": []})
 
         block = f"""
 --- AGE {age} ({year}) ---
 NAYIN: {nayin['stem_relation']}({nayin['stem_element']}→native) + {nayin['branch_relation']}({nayin['branch_element']}→native) = support:{nayin['composite_support']:.2f} {'BIRTH_STEM_RETURN' if nayin['birth_stem_return'] else ''} {'JIAZI_RETURN' if nayin.get('jiazi_return') else ''}
 PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) {'Rx' if prof.get('lord_retrograde') else ''}
 ASPECTS FIRED: {'; '.join([f"{a['other_planet']} {a['aspect_type']} orb={a['orb']}° H{a['other_house']}" + (' SECT_LIGHT' if a.get('is_sect_light') else '') for a in aspects[:3]]) if aspects else 'none'}
-ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
-DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
+ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] EFFECTS: {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
+DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS: {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
 STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
 CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
-CONVERGENCE TOP: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:3]])}"""
+CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:3]])}"""
         year_blocks.append(block)
 
     footer = """
 
-OUTPUT FORMAT:
+═══ OUTPUT FORMAT ═══
 **Age X (YYYY)**
 • prediction
 • prediction
 • prediction
 
-Generate predictions for ALL years above. ONE sentence per bullet. Under 15 words each."""
+Generate predictions for EVERY year above. One sentence per bullet. Under 15 words each. Read the signals through the interpretation framework above — don't just restate the codes."""
 
-    return header + "\n".join(year_blocks) + footer
-
-
-async def call_claude(prompt: str) -> str:
-    """Call Claude API for Layer 8 narrative."""
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not set")
-
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=8192,
-        system="You are an astrological prediction engine. Output only predictions in the specified format. No preamble.",
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text
+    return engine_framework + "\n".join(year_blocks) + footer
 
 
 # ═══════════════════════════════════════════════════════════
@@ -776,7 +890,7 @@ async def call_claude(prompt: str) -> str:
 # ═══════════════════════════════════════════════════════════
 
 async def run_prediction_engine(birth_data: dict) -> dict:
-    """Full pipeline: fetch charts → compute layers → score → LLM → return reading."""
+    """Full pipeline: fetch charts → compute layers → score → return signals + prompt."""
 
     # Check cache
     cache_key = hashlib.md5(json.dumps(birth_data, sort_keys=True).encode()).hexdigest()
@@ -833,9 +947,8 @@ async def run_prediction_engine(birth_data: dict) -> dict:
         year_data["convergence"] = score_convergence(year_data)
         all_years.append(year_data)
 
-    # Build LLM prompt and call Claude
-    prompt = build_llm_prompt(all_years, nayin_data, longevity)
-    narrative = await call_claude(prompt)
+    # Build LLM prompt (for Base44 InvokeLLM to use)
+    llm_prompt = build_llm_prompt(all_years, nayin_data, longevity)
 
     result = {
         "birth_data": birth_data,
@@ -851,7 +964,7 @@ async def run_prediction_engine(birth_data: dict) -> dict:
             "ju": f"{zwds.get('ju_element', '')} {zwds.get('ju_number', '')}",
         },
         "signals": all_years,
-        "reading": narrative,
+        "llm_prompt": llm_prompt,
     }
 
     READING_CACHE[cache_key] = result
