@@ -16,6 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 
+# Age-specific star-palace interpretations
+from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
+
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -379,13 +382,19 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
                 "qi_sha":"Seven Killings","po_jun":"Army Breaker"})
             star_list = [PINYIN_TO_ENGLISH.get(sp, sp) for sp in pinyin_list]
 
-            # Get star-palace specific effects
+            # Get star-palace specific effects (age-aware)
             star_effects = []
             for sp in pinyin_list:
-                effects = STAR_PALACE_EFFECTS.get(sp, {})
-                effect_text = effects.get(palace_name, "")
-                if effect_text:
-                    star_effects.append({"star": sp, "palace": palace_name, "effect": effect_text})
+                # Try age-specific lookup first
+                age_effect = get_star_palace_age_effect(sp, palace_name, age)
+                if age_effect:
+                    star_effects.append({"star": sp, "palace": palace_name, "effect": age_effect, "age_bracket": get_age_bracket(age)})
+                else:
+                    # Fall back to generic one-line if age-specific not available
+                    effects = STAR_PALACE_EFFECTS.get(sp, {})
+                    effect_text = effects.get(palace_name, "")
+                    if effect_text:
+                        star_effects.append({"star": sp, "palace": palace_name, "effect": effect_text})
 
             return {
                 "year": year,
@@ -430,10 +439,16 @@ def compute_decade_palace(age: int, zwds: dict) -> dict:
 
             star_effects = []
             for sp in pinyin_list:
-                effects = STAR_PALACE_EFFECTS.get(sp, {})
-                effect_text = effects.get(palace_name, "")
-                if effect_text:
-                    star_effects.append({"star": sp, "palace": palace_name, "effect": effect_text})
+                # Age-specific lookup using midpoint of decade
+                decade_midpoint = (start + end) // 2
+                age_effect = get_star_palace_age_effect(sp, palace_name, decade_midpoint)
+                if age_effect:
+                    star_effects.append({"star": sp, "palace": palace_name, "effect": age_effect, "age_bracket": get_age_bracket(decade_midpoint)})
+                else:
+                    effects = STAR_PALACE_EFFECTS.get(sp, {})
+                    effect_text = effects.get(palace_name, "")
+                    if effect_text:
+                        star_effects.append({"star": sp, "palace": palace_name, "effect": effect_text})
 
             return {
                 "palace_name": palace_name,
@@ -788,17 +803,21 @@ When sect light is activated, the year carries MAJOR weight.
 The annual palace is WHAT specifically happens. Stars in that palace are the SPECIFIC manifestation.
 Star-in-palace effects are the MOST SPECIFIC signal available. Trust them as the primary event prediction.
 
-Examples of star-palace specificity:
-- Zi Wei in Fortune = "FATE INTERVENES, destiny-level event, life redirect"
-- Tian Fu in Wealth = "VAULT OPENS, structured accumulation, financial security achieved"
-- Po Jun in Travel = "dramatic relocations, permanent departures"
-- Qi Sha in Fortune = "fate pivot through destruction, what's destroyed makes room for destiny"
-- Po Jun in Spouse = "partnership demolished and rebuilt, revolutionary union"
-- Tan Lang in Career = "entertainment/sales/marketing, charisma-driven work"
-- Ju Men in Siblings = "verbal competition, debate-oriented dynamics"
-- Tian Liang in Health = "longevity, recovery from illness, protection from fate"
+IMPORTANT: The EFFECTS strings you receive below are ALREADY age-calibrated to this person's age bracket
+(Child 0-12, Teen 13-19, Adult 20-39, Middle 40-59, Senior 60+). Do not re-translate them for age.
+They already reference age-appropriate events (school, career, health, family roles) for this specific year.
+Use them as close to literal predictions, passed through the nayin lens for delivery style.
+
+Examples of age-calibrated star-palace specificity:
+- Po Jun in Travel at age 5 = "family relocations dramatic — cross-country, international, major uproot"
+- Po Jun in Travel at age 25 = "permanent departures — leaves home country, cuts ties, doesn't return"
+- Wu Qu in Career at age 42 = "CFO, director of operations, military officer rank, senior engineer"
+- Qi Sha in Fortune at age 30 = "the year things break open — job loss leads to real calling, health scare forces priority reset"
+- Zi Wei in Life at age 50 = "reaches peak authority — CEO, director, head of institution; commands full professional weight"
+- Tian Fu in Wealth at age 38 = "peak accumulation years — investments grow, assets compound, net worth crosses thresholds"
 
 Empty palace = themes present but without strong specific expression.
+Missing effect for an age-palace combo = that combination doesn't apply at this life stage (skip it rather than force it).
 
 ═══ LAYER 5: DECADE PALACE (BACKGROUND THEME) ═══
 Sets the ~10-year backdrop. Every year within plays against this backdrop.
@@ -824,14 +843,14 @@ MEDIUM (2 sources): moderate claim, likely theme
 LOW (1 source): mild/background, mention only if it fits the narrative
 Conflicting signals: the TENSION itself is the prediction
 
-═══ AGE-APPROPRIATE LANGUAGE ═══
-- 0-5: family/caretaker events child experiences passively (parent's job change, family moves, caretaker health, family conflict)
-- 6-12: school events, peer friendships, family changes affecting child, early interests
-- 13-17: peer dynamics, identity formation, school transitions, early independence, first relationships
-- 18-25: education decisions, first career steps, romantic relationships, independence from family
-- 26-35: career building, marriage/partnership, first property, first children, financial foundations
-- 36-50: career peak or pivot, wealth management, parenting teens, partnership maturity, legacy thinking
-- 50+: consolidation, health focus, mentorship, wealth preservation, meaning-making
+═══ AGE-APPROPRIATE LANGUAGE (SECONDARY GUIDE) ═══
+The star-palace EFFECTS above are already age-calibrated. This guide is only for non-star-palace signals
+(profection house themes, nayin support, aspects) which need age translation:
+- Child (0-12): family events, school, peer dynamics, parent's circumstances affecting child
+- Teen (13-19): identity formation, peer relationships, school transitions, first independence
+- Adult (20-39): education, career building, marriage, first property, first children
+- Middle (40-59): career peak or pivot, teens at home, partnership maturity, legacy thinking
+- Senior (60+): consolidation, health focus, mentorship, wealth preservation, meaning-making
 
 ═══ OUTPUT RULES ═══
 For EACH year:
@@ -865,8 +884,8 @@ For EACH year:
 NAYIN: {nayin['stem_relation']}({nayin['stem_element']}→native) + {nayin['branch_relation']}({nayin['branch_element']}→native) = support:{nayin['composite_support']:.2f} {'BIRTH_STEM_RETURN' if nayin['birth_stem_return'] else ''} {'JIAZI_RETURN' if nayin.get('jiazi_return') else ''}
 PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) {'Rx' if prof.get('lord_retrograde') else ''}
 ASPECTS FIRED: {'; '.join([f"{a['other_planet']} {a['aspect_type']} orb={a['orb']}° H{a['other_house']}" + (' SECT_LIGHT' if a.get('is_sect_light') else '') for a in aspects[:3]]) if aspects else 'none'}
-ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] EFFECTS: {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
-DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS: {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
+ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
+DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
 STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
 CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
 CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:3]])}"""
