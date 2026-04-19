@@ -18,6 +18,7 @@ import httpx
 
 # Age-specific star-palace interpretations
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
+from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
 
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -707,7 +708,7 @@ def estimate_longevity(hellenistic: dict, zwds: dict) -> int:
 # LAYER 8: LLM PROMPT + CLAUDE CALL
 # ═══════════════════════════════════════════════════════════
 
-def build_llm_prompt(all_years: list, nayin_data: dict, longevity: int) -> str:
+def build_llm_prompt(all_years: list, nayin_data: dict, longevity: int, user_stance: str = "") -> str:
     """Build ONE prompt: full interpretation engine + per-year signals."""
 
     engine_framework = f"""You are the Starlogic Prediction Engine. You receive pre-computed astrological signals and translate them into life predictions using the interpretation framework below. Follow it exactly.
@@ -716,6 +717,8 @@ def build_llm_prompt(all_years: list, nayin_data: dict, longevity: int) -> str:
 Soul Element: {nayin_data.get('english_name', '')} ({nayin_data.get('element', '')})
 Properties: visibility={nayin_data.get('properties', {}).get('visibility', '')}, strength={nayin_data.get('properties', {}).get('strength', '')}, recognition={nayin_data.get('properties', {}).get('recognition', '')}
 Projected lifespan: {longevity} years.
+
+{user_stance}
 
 ═══ LAYER 1: NAYIN — THE OPERATING SYSTEM (FOUNDATION) ═══
 The nayin is NOT a modifier. It IS the foundation through which every prediction delivers.
@@ -908,11 +911,12 @@ Generate predictions for EVERY year above. One sentence per bullet. Under 15 wor
 # MASTER ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════
 
-async def run_prediction_engine(birth_data: dict) -> dict:
+async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = None) -> dict:
     """Full pipeline: fetch charts → compute layers → score → return signals + prompt."""
 
-    # Check cache
-    cache_key = hashlib.md5(json.dumps(birth_data, sort_keys=True).encode()).hexdigest()
+    # Check cache (key includes clarifying answers so different answers produce different readings)
+    cache_input = {"birth": birth_data, "answers": clarifying_answers or {}}
+    cache_key = hashlib.md5(json.dumps(cache_input, sort_keys=True).encode()).hexdigest()
     if cache_key in READING_CACHE:
         return READING_CACHE[cache_key]
 
@@ -938,7 +942,7 @@ async def run_prediction_engine(birth_data: dict) -> dict:
 
     # Estimate longevity
     longevity = estimate_longevity(hellenistic, zwds)
-    end_age = min(longevity, 80)  # cap at 80 for token limits
+    end_age = longevity  # generate signals through projected lifespan
 
     # Compute all 7 layers for each year
     history = {}
@@ -967,7 +971,9 @@ async def run_prediction_engine(birth_data: dict) -> dict:
         all_years.append(year_data)
 
     # Build LLM prompt (for Base44 InvokeLLM to use)
-    llm_prompt = build_llm_prompt(all_years, nayin_data, longevity)
+    questions = generate_clarifying_questions(nayin_data, hellenistic, zwds)
+    user_stance = format_answers_for_llm(questions, clarifying_answers) if clarifying_answers else ""
+    llm_prompt = build_llm_prompt(all_years, nayin_data, longevity, user_stance)
 
     result = {
         "birth_data": birth_data,
@@ -1000,16 +1006,36 @@ class BirthInput(BaseModel):
     latitude: float
     longitude: float
     timezone_offset: float
+    clarifying_answers: Optional[dict] = None
 
 @app.get("/health")
 def health():
     return {"status": "ok", "engine": "prediction", "version": "1.0.0"}
 
+@app.post("/clarifying_questions")
+async def get_clarifying_questions(data: BirthInput):
+    """Return 9 tailored true/false questions for this chart."""
+    birth_data = data.model_dump()
+    birth_data.pop("clarifying_answers", None)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        hell_resp = await client.post(f"{HELLENISTIC_URL}/chart", json=birth_data)
+        zwds_resp = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
+    if hell_resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Hellenistic engine error: {hell_resp.text}")
+    if zwds_resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"ZWDS engine error: {zwds_resp.text}")
+    hellenistic = hell_resp.json()
+    zwds = zwds_resp.json()
+    nayin_data = zwds.get("nayin", {})
+    questions = generate_clarifying_questions(nayin_data, hellenistic, zwds)
+    return {"questions": questions, "count": len(questions)}
+
 @app.post("/reading")
 async def generate_reading(data: BirthInput):
     """Full life reading — ONE call, all layers, cached."""
     birth_data = data.model_dump()
-    return await run_prediction_engine(birth_data)
+    clarifying_answers = birth_data.pop("clarifying_answers", None)
+    return await run_prediction_engine(birth_data, clarifying_answers)
 
 @app.post("/reading/signals")
 async def get_signals(data: BirthInput):
@@ -1032,7 +1058,7 @@ async def get_signals(data: BirthInput):
 
     history = {}
     all_years = []
-    for age in range(min(longevity, 80) + 1):
+    for age in range(longevity + 1):
         year = birth_year + age
         year_data = {
             "age": age, "year": year,
