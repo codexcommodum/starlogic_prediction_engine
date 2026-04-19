@@ -421,7 +421,7 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
                 "qi_sha":"Seven Killings","po_jun":"Army Breaker"})
             star_list = [PINYIN_TO_ENGLISH.get(sp, sp) for sp in pinyin_list]
 
-            # Get star-palace specific effects (age-aware only ó no fallback to generic)
+            # Get star-palace specific effects (age-aware only - no fallback to generic)
             star_effects = []
             for sp in pinyin_list:
                 age_effect = get_star_palace_age_effect(sp, palace_name, age)
@@ -581,7 +581,7 @@ def score_convergence(year_data: dict) -> dict:
         domain_scores[kw]["score"] += 0.20
         domain_scores[kw]["sources"].append("lord_natal_house")
 
-    # Dignity modifier ó exalted/domicile lords deliver strongly; fallen/detriment lords frustrate hard.
+    # Dignity modifier - exalted/domicile lords deliver strongly; fallen/detriment lords frustrate hard.
     # These effects used to be +/- 0.15 which was too quiet. Raised so they surface as dominant themes.
     dig_score = prof.get("dignity_score", 0.15)
     dig_label = prof.get("lord_dignity", "peregrine").lower()
@@ -665,7 +665,7 @@ def score_convergence(year_data: dict) -> dict:
         else:
             tightness_multiplier = 1.0
 
-        # Sect light involvement ó scale with tightness
+        # Sect light involvement - scale with tightness
         if is_sect:
             sect_score = 0.30 * tightness_multiplier
             domain_scores["significance"]["score"] += sect_score
@@ -701,7 +701,7 @@ def score_convergence(year_data: dict) -> dict:
                 domain_scores[kw]["score"] += 0.30
                 domain_scores[kw]["sources"].append("annual_meets_decade")
 
-    # Multi-source bonus ó steeper curve so stacked signals compound hard, not linearly.
+    # Multi-source bonus - steeper curve so stacked signals compound hard, not linearly.
     for domain, data in domain_scores.items():
         unique = len(set(data["sources"]))
         if unique == 3:
@@ -714,7 +714,7 @@ def score_convergence(year_data: dict) -> dict:
             data["score"] *= 2.20
             data["multi_source"] = True
 
-    # Compression year detection ó count how many independent HIGH-confidence domains are firing
+    # Compression year detection - count how many independent HIGH-confidence domains are firing
     # If 4+ independent domains cross the HIGH threshold, this is a stacked-event year.
     high_confidence_count = sum(
         1 for d, dat in domain_scores.items()
@@ -903,7 +903,7 @@ When sect light is activated, the year carries MAJOR weight.
 A near-exact aspect (orb under 0.5 degrees) means the event is LARGE, not that it is GOOD or BAD.
 - A tight square CAN be a profound positive event (first love, breakthrough committed to through effort)
 - A tight trine CAN be a negative event (easy slide into loss, blessing that turns draining)
-Valence comes from: nayin support direction, dignity of the planets involved, which age-contextual subject is activated, and the user's stance answers ó NOT from aspect type alone.
+Valence comes from: nayin support direction, dignity of the planets involved, which age-contextual subject is activated, and the user's stance answers - NOT from aspect type alone.
 When you see 'major_event' in convergence, translate it as defining year magnitude; then read the other signals to judge whether it felt good, hard, or mixed.
 
 ‚ïê‚ïê‚ïê LAYER 4: ANNUAL PALACE + STARS (FOREGROUND EVENT) ‚ïê‚ïê‚ïê
@@ -1021,13 +1021,13 @@ For EACH year:
         block = f"""
 --- AGE {age} ({year}) ---
 NAYIN: {nayin['stem_relation']}({nayin['stem_element']}‚Üínative) + {nayin['branch_relation']}({nayin['branch_element']}‚Üínative) = support:{nayin['composite_support']:.2f} {'BIRTH_STEM_RETURN' if nayin['birth_stem_return'] else ''} {'JIAZI_RETURN' if nayin.get('jiazi_return') else ''}
-PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) ó age-contextual subject: {get_age_contextual_house_subject(prof['house'], age)} | Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) ó lord-house subject: {get_age_contextual_house_subject(prof['lord_house'], age)} {'Rx' if prof.get('lord_retrograde') else ''}
+PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) - age-contextual subject: {get_age_contextual_house_subject(prof['house'], age)} | Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) - lord-house subject: {get_age_contextual_house_subject(prof['lord_house'], age)} {'Rx' if prof.get('lord_retrograde') else ''}
 ASPECTS FIRED: {'; '.join([f"{a['other_planet']} {a['aspect_type']} orb={a['orb']}¬∞ H{a['other_house']}" + (' SECT_LIGHT' if a.get('is_sect_light') else '') for a in aspects[:3]]) if aspects else 'none'}
 ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
 DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
 STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
 CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
-CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:5]])}{' <<< COMPRESSION YEAR ó 4+ major domains firing' if convergence.get('compression_year') else ''}"""
+CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:5]])}{' <<< COMPRESSION YEAR - 4+ major domains firing' if convergence.get('compression_year') else ''}"""
         year_blocks.append(block)
 
     footer = """
