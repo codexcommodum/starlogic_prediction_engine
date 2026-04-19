@@ -266,6 +266,44 @@ def compute_nayin_layer(nayin_data: dict, year: int) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════
+def get_age_contextual_house_subject(house: int, age: int) -> str:
+    '''
+    Universal age-contextual remapping of house subjects.
+    Reads age from computed life stage; applies to any chart.
+    Returns the appropriate subject for a house activation given the person's age.
+    '''
+    # Age brackets
+    if age <= 12:
+        bracket = "child"
+    elif age <= 17:
+        bracket = "teen"
+    elif age <= 25:
+        bracket = "young_adult"
+    elif age <= 39:
+        bracket = "adult"
+    elif age <= 59:
+        bracket = "middle"
+    else:
+        bracket = "senior"
+
+    # House subject by bracket
+    remap = {
+        1:  {"child": "child self-concept, body awareness", "teen": "identity formation", "young_adult": "self-identity", "adult": "self", "middle": "self", "senior": "self and legacy"},
+        2:  {"child": "family financial situation affecting child", "teen": "first money, first job, values forming", "young_adult": "first earning, financial independence forming", "adult": "earnings and resources", "middle": "accumulated resources", "senior": "preservation of resources"},
+        3:  {"child": "siblings/cousins, school, immediate environment", "teen": "peer communication, school, siblings", "young_adult": "peer network, learning, early mentors", "adult": "communication and siblings", "middle": "community of peers", "senior": "passing knowledge, communication"},
+        4:  {"child": "family moves, home structure, caretakers", "teen": "home base stability or instability", "young_adult": "leaving home, first apartment", "adult": "home, family, real estate", "middle": "home as anchor for family", "senior": "ancestral home, final residence"},
+        5:  {"child": "child's creative play, first crushes, joy", "teen": "creative identity, first romance, sports", "young_adult": "creative expression, dating, hobbies", "adult": "children, creativity, romance", "middle": "teens at home, creative legacy", "senior": "grandchildren, artistic legacy"},
+        6:  {"child": "health events, school routine, body", "teen": "body changes, health, daily school", "young_adult": "body, illness, daily work routines", "adult": "health, daily work, service", "middle": "health management, chronic conditions", "senior": "health and daily routine"},
+        7:  {"child": "parents' marriage/partnership, caretaker bond", "teen": "peer dynamics, early romance, best friend", "young_adult": "first serious partnership, committed relationship", "adult": "marriage, business partnership, rivals", "middle": "long marriage, committed alliances", "senior": "long partnership, widowhood"},
+        8:  {"child": "family financial crisis or windfall, inherited issues", "teen": "first major loss or inherited family asset", "young_adult": "deep transformation, first real loss", "adult": "shared resources, inheritance, transformation", "middle": "inheritance events, major transitions", "senior": "estate, legacy transmission"},
+        9:  {"child": "travel with family, religious/cultural exposure", "teen": "study abroad, faith questions, travel", "young_adult": "higher education, foreign travel", "adult": "philosophy, foreign matters, higher learning", "middle": "teaching, mentoring, pilgrimage", "senior": "wisdom, final journeys"},
+        10: {"child": "parents' career, caretaker's public role", "teen": "school reputation, early ambitions", "young_adult": "first career steps, public identity forming", "adult": "career, public reputation, authority", "middle": "career peak or final pivot", "senior": "legacy, post-retirement contribution"},
+        11: {"child": "friends, groups, social belonging", "teen": "peer group, clubs, social identity", "young_adult": "college friends, early network, hopes", "adult": "friends, professional network, community", "middle": "established network, mentees", "senior": "lifelong friends, community of elders"},
+        12: {"child": "hidden family matters, fears, imagination", "teen": "hidden struggles, secrets, solitude", "young_adult": "spiritual seeking, hidden aspects", "adult": "isolation, secrets, hidden matters", "middle": "contemplation, withdrawal, legacy reflection", "senior": "endings, dissolution, transcendence"},
+    }
+    return remap.get(house, {}).get(bracket, "")
+
+
 # LAYER 2: PROFECTION
 # ═══════════════════════════════════════════════════════════
 
@@ -383,19 +421,12 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
                 "qi_sha":"Seven Killings","po_jun":"Army Breaker"})
             star_list = [PINYIN_TO_ENGLISH.get(sp, sp) for sp in pinyin_list]
 
-            # Get star-palace specific effects (age-aware)
+            # Get star-palace specific effects (age-aware only � no fallback to generic)
             star_effects = []
             for sp in pinyin_list:
-                # Try age-specific lookup first
                 age_effect = get_star_palace_age_effect(sp, palace_name, age)
                 if age_effect:
                     star_effects.append({"star": sp, "palace": palace_name, "effect": age_effect, "age_bracket": get_age_bracket(age)})
-                else:
-                    # Fall back to generic one-line if age-specific not available
-                    effects = STAR_PALACE_EFFECTS.get(sp, {})
-                    effect_text = effects.get(palace_name, "")
-                    if effect_text:
-                        star_effects.append({"star": sp, "palace": palace_name, "effect": effect_text})
 
             return {
                 "year": year,
@@ -440,16 +471,10 @@ def compute_decade_palace(age: int, zwds: dict) -> dict:
 
             star_effects = []
             for sp in pinyin_list:
-                # Age-specific lookup using midpoint of decade
                 decade_midpoint = (start + end) // 2
                 age_effect = get_star_palace_age_effect(sp, palace_name, decade_midpoint)
                 if age_effect:
                     star_effects.append({"star": sp, "palace": palace_name, "effect": age_effect, "age_bracket": get_age_bracket(decade_midpoint)})
-                else:
-                    effects = STAR_PALACE_EFFECTS.get(sp, {})
-                    effect_text = effects.get(palace_name, "")
-                    if effect_text:
-                        star_effects.append({"star": sp, "palace": palace_name, "effect": effect_text})
 
             return {
                 "palace_name": palace_name,
@@ -556,15 +581,39 @@ def score_convergence(year_data: dict) -> dict:
         domain_scores[kw]["score"] += 0.20
         domain_scores[kw]["sources"].append("lord_natal_house")
 
-    # Dignity modifier
+    # Dignity modifier � exalted/domicile lords deliver strongly; fallen/detriment lords frustrate hard.
+    # These effects used to be +/- 0.15 which was too quiet. Raised so they surface as dominant themes.
     dig_score = prof.get("dignity_score", 0.15)
-    for kw in prof.get("house_themes", {}).get("keywords", []):
-        if dig_score >= 0.6:
-            domain_scores[f"{kw}_positive"]["score"] += dig_score * 0.15
-            domain_scores[f"{kw}_positive"]["sources"].append("dignity_boost")
-        elif dig_score <= 0.3:
-            domain_scores[f"{kw}_frustrated"]["score"] += (1 - dig_score) * 0.15
-            domain_scores[f"{kw}_frustrated"]["sources"].append("dignity_deficit")
+    dig_label = prof.get("lord_dignity", "peregrine").lower()
+
+    # Strength multiplier: exaltation (1.0) > domicile (0.9) > peregrine (0.15) > fall (0.1) > detriment (0.05)
+    if dig_label == "exaltation":
+        strong_weight = 0.50  # +0.50 to each house theme domain, across all keywords
+    elif dig_label == "domicile":
+        strong_weight = 0.40
+    elif dig_label in ("fall", "detriment"):
+        strong_weight = 0  # handled as frustration below
+    else:
+        strong_weight = 0
+
+    if dig_label in ("exaltation", "domicile"):
+        for kw in prof.get("house_themes", {}).get("keywords", []):
+            domain_scores[f"{kw}_delivered"]["score"] += strong_weight
+            domain_scores[f"{kw}_delivered"]["sources"].append(f"lord_{dig_label}")
+        # Lord also projects its natal house themes with strength
+        for kw in prof.get("lord_house_themes", {}).get("keywords", []):
+            domain_scores[f"{kw}_active"]["score"] += strong_weight * 0.7
+            domain_scores[f"{kw}_active"]["sources"].append(f"lord_{dig_label}_in_house")
+
+    elif dig_label in ("fall", "detriment"):
+        frustrate_weight = 0.45 if dig_label == "detriment" else 0.35
+        for kw in prof.get("house_themes", {}).get("keywords", []):
+            domain_scores[f"{kw}_frustrated"]["score"] += frustrate_weight
+            domain_scores[f"{kw}_frustrated"]["sources"].append(f"lord_{dig_label}")
+        # Fallen lord drags its natal house themes too
+        for kw in prof.get("lord_house_themes", {}).get("keywords", []):
+            domain_scores[f"{kw}_strained"]["score"] += frustrate_weight * 0.7
+            domain_scores[f"{kw}_strained"]["sources"].append(f"lord_{dig_label}_in_house")
 
     # Decade palace
     decade = year_data.get("decade", {})
@@ -602,12 +651,44 @@ def score_convergence(year_data: dict) -> dict:
 
     # Aspect activations
     for asp in year_data.get("aspects", []):
-        if asp.get("is_sect_light"):
-            domain_scores["significance"]["score"] += 0.30
+        orb = asp.get("orb", 10)
+        asp_type = asp.get("aspect_type", "")
+        is_sect = asp.get("is_sect_light", False)
+
+        # Tight-orb amplifier: sub-0.5 degree orbs are exact and carry major weight
+        if orb < 0.5:
+            tightness_multiplier = 2.5  # near-exact = 2.5x normal
+        elif orb < 1.0:
+            tightness_multiplier = 1.8
+        elif orb < 2.0:
+            tightness_multiplier = 1.3
+        else:
+            tightness_multiplier = 1.0
+
+        # Sect light involvement � scale with tightness
+        if is_sect:
+            sect_score = 0.30 * tightness_multiplier
+            domain_scores["significance"]["score"] += sect_score
             domain_scores["significance"]["sources"].append("sect_light")
-        if asp.get("aspect_type") == "conjunction" and asp.get("orb", 10) < 1.0:
-            domain_scores["intensity"]["score"] += 0.20
+            # Very tight aspects to sect light = headline event
+            if orb < 0.5:
+                domain_scores["major_event"]["score"] += 0.40
+                domain_scores["major_event"]["sources"].append("exact_sect_light_aspect")
+
+        # Tight conjunction of any planet
+        if asp_type == "conjunction" and orb < 1.0:
+            domain_scores["intensity"]["score"] += 0.20 * tightness_multiplier
             domain_scores["intensity"]["sources"].append("tight_conjunction")
+
+        # Tight hard aspect (square/opposition) carries crisis weight
+        if asp_type in ("square", "opposition") and orb < 1.0:
+            domain_scores["crisis_pressure"]["score"] += 0.25 * tightness_multiplier
+            domain_scores["crisis_pressure"]["sources"].append(f"tight_{asp_type}")
+
+        # Tight supportive aspect (trine/sextile) carries blessing weight
+        if asp_type in ("trine", "sextile") and orb < 1.0:
+            domain_scores["support_arriving"]["score"] += 0.20 * tightness_multiplier
+            domain_scores["support_arriving"]["sources"].append(f"tight_{asp_type}")
 
     # Cycle patterns
     for pat in year_data.get("cycles", []):
@@ -620,19 +701,35 @@ def score_convergence(year_data: dict) -> dict:
                 domain_scores[kw]["score"] += 0.30
                 domain_scores[kw]["sources"].append("annual_meets_decade")
 
-    # Multi-source bonus
+    # Multi-source bonus � steeper curve so stacked signals compound hard, not linearly.
     for domain, data in domain_scores.items():
         unique = len(set(data["sources"]))
-        if unique >= 3:
-            data["score"] *= 1.0 + (0.15 * (unique - 2))
+        if unique == 3:
+            data["score"] *= 1.30
             data["multi_source"] = True
+        elif unique == 4:
+            data["score"] *= 1.70
+            data["multi_source"] = True
+        elif unique >= 5:
+            data["score"] *= 2.20
+            data["multi_source"] = True
+
+    # Compression year detection � count how many independent HIGH-confidence domains are firing
+    # If 4+ independent domains cross the HIGH threshold, this is a stacked-event year.
+    high_confidence_count = sum(
+        1 for d, dat in domain_scores.items()
+        if len(set(dat["sources"])) >= 3 and dat["score"] >= 0.5
+    )
+    compression_flag = high_confidence_count >= 4
 
     sorted_domains = sorted(domain_scores.items(), key=lambda x: -x[1]["score"])
     return {
         "top_domains": [{"domain": d[0], "score": round(d[1]["score"], 3),
                          "sources": len(set(d[1]["sources"])),
                          "confidence": "HIGH" if len(set(d[1]["sources"])) >= 3 else "MEDIUM" if len(set(d[1]["sources"])) >= 2 else "LOW"}
-                        for d in sorted_domains[:5]],
+                        for d in sorted_domains[:8]],
+        "high_confidence_count": high_confidence_count,
+        "compression_year": compression_flag,
     }
 
 
@@ -802,6 +899,13 @@ Aspect meanings:
 
 When sect light is activated, the year carries MAJOR weight.
 
+=== TIGHTNESS INDICATES MAGNITUDE, NOT VALENCE ===
+A near-exact aspect (orb under 0.5 degrees) means the event is LARGE, not that it is GOOD or BAD.
+- A tight square CAN be a profound positive event (first love, breakthrough committed to through effort)
+- A tight trine CAN be a negative event (easy slide into loss, blessing that turns draining)
+Valence comes from: nayin support direction, dignity of the planets involved, which age-contextual subject is activated, and the user's stance answers � NOT from aspect type alone.
+When you see 'major_event' in convergence, translate it as defining year magnitude; then read the other signals to judge whether it felt good, hard, or mixed.
+
 ═══ LAYER 4: ANNUAL PALACE + STARS (FOREGROUND EVENT) ═══
 The annual palace is WHAT specifically happens. Stars in that palace are the SPECIFIC manifestation.
 Star-in-palace effects are the MOST SPECIFIC signal available. Trust them as the primary event prediction.
@@ -821,6 +925,28 @@ Examples of age-calibrated star-palace specificity:
 
 Empty palace = themes present but without strong specific expression.
 Missing effect for an age-palace combo = that combination doesn't apply at this life stage (skip it rather than force it).
+
+=== QI SHA / PO JUN HAVE THREE MODES ===
+Do not default to destructive interpretation. Choose the mode by reading the signals:
+- PASSIVE DESTRUCTION (things happen to the person: fire, accident, layoff, diagnosis, loss): use when nayin support is negative, destruction-timing stance is FALSE (unresolved rupture ahead), or age is Child/Senior.
+- ACTIVE DEMOLITION (the person chooses to break things: quit, divorce, sell, end an era): use when destruction-timing stance is TRUE (person already survived rupture), nayin is moderate to supportive, adult ages.
+- AGGRESSIVE ACQUISITION (the person USES the destructive energy to build, scale, take over, compound hard): use when Tian Fu or Wu Qu is prominent in the chart, appetite/discipline stance favors building, and it is an Adult or Middle year.
+
+Default to ACTIVE DEMOLITION (person as agent) when in doubt, not PASSIVE DESTRUCTION.
+
+=== COMPRESSION YEARS ===
+When a year has 4 or more independent HIGH-confidence convergence signals firing, flag it as a COMPRESSION YEAR.
+A compression year stacks multiple independent major events in a single 12-month span: a career change AND a relationship event AND a property event AND a health event all hitting together.
+Do not average them into one vague theme. Predict each one explicitly as its own event, and name the year as "a year that carries several of your life's biggest events at once."
+
+=== NAYIN AS TIMING, NOT JUST FLAVOR ===
+The nayin visibility property is a TIMING instruction:
+- hidden / buried / low / dim nayin = events build invisibly over years, then surface as sudden breakthroughs. A "seed year" may feel small but germinates into a surface event 10 to 20 years later. When describing a hidden-nayin person's young-adult years, frame them as "the seed of what will surface later" rather than as the climax.
+- exposed / prominent / explosive nayin = events and visibility land in the same year. The signal IS the event.
+- subtle / worn / crafted nayin = results emerge through observation over months, not years.
+- emerging / fruiting nayin = events arrive at predictable harvest moments (major palace cycles, decade transitions).
+
+Read the person's nayin visibility first; it tells you WHEN to expect the signals to land, not just WHAT.
 
 ═══ LAYER 5: DECADE PALACE (BACKGROUND THEME) ═══
 Sets the ~10-year backdrop. Every year within plays against this backdrop.
@@ -845,6 +971,16 @@ HIGH (3+ layer sources): bold specific prediction, this WILL happen
 MEDIUM (2 sources): moderate claim, likely theme
 LOW (1 source): mild/background, mention only if it fits the narrative
 Conflicting signals: the TENSION itself is the prediction
+
+=== DOMAIN LABEL SEMANTICS ===
+When you see these suffixes in the CONVERGENCE line, they modify how you describe the event:
+- <domain>_delivered = profection lord exalted/domicile on this domain -- predict CLEAN SUCCESS, opportunity landing, achievement
+- <domain>_active = lord's natal house domain also activating -- secondary theme woven into primary
+- <domain>_frustrated = profection lord fallen/detriment -- predict BLOCKED, almost-wins, frustration in this domain
+- <domain>_strained = lord's natal house domain dragged down by weak lord -- secondary strain theme
+- major_event = tight aspect to sect light under 0.5 degrees -- this is a HEADLINE year, a defining event
+- crisis_pressure = tight square/opposition under 1 degree -- predict confrontation, forced action, rupture
+- support_arriving = tight trine/sextile under 1 degree -- predict help, opportunity, mentor, breakthrough support
 
 ═══ AGE-APPROPRIATE LANGUAGE (SECONDARY GUIDE) ═══
 The star-palace EFFECTS above are already age-calibrated. This guide is only for non-star-palace signals
@@ -885,13 +1021,13 @@ For EACH year:
         block = f"""
 --- AGE {age} ({year}) ---
 NAYIN: {nayin['stem_relation']}({nayin['stem_element']}→native) + {nayin['branch_relation']}({nayin['branch_element']}→native) = support:{nayin['composite_support']:.2f} {'BIRTH_STEM_RETURN' if nayin['birth_stem_return'] else ''} {'JIAZI_RETURN' if nayin.get('jiazi_return') else ''}
-PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) {'Rx' if prof.get('lord_retrograde') else ''}
+PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) � age-contextual subject: {get_age_contextual_house_subject(prof['house'], age)} | Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) � lord-house subject: {get_age_contextual_house_subject(prof['lord_house'], age)} {'Rx' if prof.get('lord_retrograde') else ''}
 ASPECTS FIRED: {'; '.join([f"{a['other_planet']} {a['aspect_type']} orb={a['orb']}° H{a['other_house']}" + (' SECT_LIGHT' if a.get('is_sect_light') else '') for a in aspects[:3]]) if aspects else 'none'}
 ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
 DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
 STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
 CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
-CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:3]])}"""
+CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:5]])}{' <<< COMPRESSION YEAR � 4+ major domains firing' if convergence.get('compression_year') else ''}"""
         year_blocks.append(block)
 
     footer = """
