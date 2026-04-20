@@ -19,6 +19,7 @@ import httpx
 # Age-specific star-palace interpretations
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
 from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
+from theme_bridge import build_year_themes, is_compression_year
 
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -1023,6 +1024,8 @@ For EACH year:
         stem_branch = yd["stem_branch"]
         cycles = yd.get("cycles", [])
         convergence = yd.get("convergence", {"top_domains": []})
+        themes = yd.get("themes", [])
+        compression_year = yd.get("compression_year", False)
 
         block = f"""
 --- AGE {age} ({year}) ---
@@ -1033,7 +1036,8 @@ ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]
 DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
 STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
 CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
-CONVERGENCE: {', '.join([f"{d['domain']}({d['confidence']}:{d['score']})" for d in convergence['top_domains'][:5]])}{' <<< COMPRESSION YEAR - 4+ major domains firing' if convergence.get('compression_year') else ''}"""
+THEMES (ZWDS-led, Hellenistic validates): {' | '.join([f"{t['theme']}[{t['confidence']}]" for t in themes[:5]]) if themes else 'no strong themes'}{' <<< COMPRESSION YEAR - 3+ themes at MEDIUM/HIGH' if compression_year else ''}
+THEME EVIDENCE: {'; '.join([f"{t['theme']}: ZWDS={'/'.join(t['zwds_evidence'][:2])}; Hel={t['hellenistic_strength']}" for t in themes[:3]]) if themes else ''}"""
         year_blocks.append(block)
 
     footer = """
@@ -1110,6 +1114,9 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         history[age] = year_data
         year_data["cycles"] = detect_cycles(age, history)
         year_data["convergence"] = score_convergence(year_data)
+        # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
+        year_data["themes"] = build_year_themes(year_data)
+        year_data["compression_year"] = is_compression_year(year_data["themes"])
         all_years.append(year_data)
 
     # Build LLM prompt (for Base44 InvokeLLM to use)
@@ -1215,6 +1222,9 @@ async def get_signals(data: BirthInput):
         history[age] = year_data
         year_data["cycles"] = detect_cycles(age, history)
         year_data["convergence"] = score_convergence(year_data)
+        # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
+        year_data["themes"] = build_year_themes(year_data)
+        year_data["compression_year"] = is_compression_year(year_data["themes"])
         all_years.append(year_data)
 
     return {"longevity": longevity, "signals": all_years}
