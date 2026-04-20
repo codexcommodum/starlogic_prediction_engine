@@ -434,6 +434,7 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
                 "age": age,
                 "palace_name": palace_name,
                 "palace_branch": a.get("palace_branch", ""),
+                "year_stem_branch": a.get("year_stem_branch", ""),
                 "stars_english": star_list,
                 "stars_pinyin": pinyin_list,
                 "star_palace_effects": star_effects,
@@ -1115,7 +1116,7 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         year_data["cycles"] = detect_cycles(age, history)
         year_data["convergence"] = score_convergence(year_data)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
-        year_data["themes"] = build_year_themes(year_data)
+        year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
         all_years.append(year_data)
 
@@ -1223,7 +1224,7 @@ async def get_signals(data: BirthInput):
         year_data["cycles"] = detect_cycles(age, history)
         year_data["convergence"] = score_convergence(year_data)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
-        year_data["themes"] = build_year_themes(year_data)
+        year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
         all_years.append(year_data)
 
