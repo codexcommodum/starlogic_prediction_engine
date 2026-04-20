@@ -1043,13 +1043,54 @@ THEME EVIDENCE: {'; '.join([f"{t['theme']}: ZWDS={'/'.join(t['zwds_evidence'][:2
 
     footer = """
 
-═══ OUTPUT FORMAT ═══
-**Age X (YYYY)**
-• prediction
-• prediction
-• prediction
+=== OUTPUT FORMAT - TWO PARTS ===
 
-Generate predictions for EVERY year above. One sentence per bullet. Under 15 words each. Read the signals through the interpretation framework above — don't just restate the codes."""
+PART 1: PERSONALITY PORTRAIT (write these 8 sections first)
+
+Write 8 sections, each beginning with a markdown H2 header exactly as shown below.
+Each section is ~150-200 words of second-person prose (starts with "You..."). No jargon.
+No references to "nayin", "sect", "benefic", "malefic", "palace", "Qi Sha", "Po Jun", "Tan Lang", "Wu Qu", "Zi Wei", "Tian Fu", "profection", or any astrological term.
+Translate astrological concepts into plain human language the reader can feel.
+
+Write in a grounded, honest, slightly reverent tone. Direct. No filler.
+Use the 9 user stance answers above to TILT each section - if the chart suggests X but the user's stance confirms Y, trust the stance.
+
+## Your Soul Element
+Describe what their nayin IS (the image - gold in the sea, fire on a hilltop, etc.) and what kind of person this makes them at the foundational material level. How they are built. What this essence does in the world.
+
+## Your Nature
+Their temperament. How they move through the world. Day-born vs night-born expression. Rhythm of their internal life. How they process information and make decisions.
+
+## Your Strengths
+The 2-4 things their chart shows they are genuinely built to do well. Specific, not generic. Drawn from dignified placements and strong palace/star combinations.
+
+## Your Shadows
+The recurring patterns that trip them up. Blind spots. Where they struggle. Drawn from fallen/weak placements. Honest without being cruel.
+
+## Your Relationships
+How they show up in close bonds - romantic, familial, friendship. What they offer. What they struggle with. What kind of partner fits them best.
+
+## Your Luck
+Their overall luck flavor. Where fortune tends to land. Where it tends to slip. Protected / tested / rupture-prone / steady-builder / wealth-favored / relationally-favored - pick the archetype that fits this specific chart.
+
+## Your Core Drive
+What their life is fundamentally aimed at. The deeper mission their chart points to. What they are HERE to do.
+
+## Your Timing
+How their life unfolds. Hidden essence = invisible buildup, late bloom, seeds planted now surface in decades. Exposed essence = events and visibility land same-year. Describe their specific rhythm.
+
+---
+
+PART 2: YEAR-BY-YEAR TIMELINE (write all years AFTER the portrait, using this format)
+
+**Age X (YYYY)**
+- prediction
+- prediction
+- prediction
+
+Generate predictions for EVERY year listed in the signals above. One sentence per bullet. Under 15 words each. Read the signals through the interpretation framework above - don't just restate the codes.
+
+IMPORTANT: Write PART 1 first (all 8 portrait sections with ## headers), then write PART 2 (all year-by-year predictions). Do not mix them. Do not skip either part."""
 
     return engine_framework + "\n".join(year_blocks) + footer
 
