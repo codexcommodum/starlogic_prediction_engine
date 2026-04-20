@@ -596,24 +596,30 @@ def score_convergence(year_data: dict) -> dict:
     else:
         strong_weight = 0
 
+    # Dignity adds weight AND a valence tag onto the EXISTING domain keywords (not a new keyword).
+    # This lets multi-source bonuses stack — same "partnerships" gets hit by profection + lord_house + dignity + stars + aspects.
     if dig_label in ("exaltation", "domicile"):
         for kw in prof.get("house_themes", {}).get("keywords", []):
-            domain_scores[f"{kw}_delivered"]["score"] += strong_weight
-            domain_scores[f"{kw}_delivered"]["sources"].append(f"lord_{dig_label}")
+            domain_scores[kw]["score"] += strong_weight
+            domain_scores[kw]["sources"].append(f"lord_{dig_label}")
+            domain_scores[kw]["valence_tags"] = domain_scores[kw].get("valence_tags", []) + ["delivered"]
         # Lord also projects its natal house themes with strength
         for kw in prof.get("lord_house_themes", {}).get("keywords", []):
-            domain_scores[f"{kw}_active"]["score"] += strong_weight * 0.7
-            domain_scores[f"{kw}_active"]["sources"].append(f"lord_{dig_label}_in_house")
+            domain_scores[kw]["score"] += strong_weight * 0.7
+            domain_scores[kw]["sources"].append(f"lord_{dig_label}_in_house")
+            domain_scores[kw]["valence_tags"] = domain_scores[kw].get("valence_tags", []) + ["active"]
 
     elif dig_label in ("fall", "detriment"):
         frustrate_weight = 0.45 if dig_label == "detriment" else 0.35
         for kw in prof.get("house_themes", {}).get("keywords", []):
-            domain_scores[f"{kw}_frustrated"]["score"] += frustrate_weight
-            domain_scores[f"{kw}_frustrated"]["sources"].append(f"lord_{dig_label}")
+            domain_scores[kw]["score"] += frustrate_weight
+            domain_scores[kw]["sources"].append(f"lord_{dig_label}")
+            domain_scores[kw]["valence_tags"] = domain_scores[kw].get("valence_tags", []) + ["frustrated"]
         # Fallen lord drags its natal house themes too
         for kw in prof.get("lord_house_themes", {}).get("keywords", []):
-            domain_scores[f"{kw}_strained"]["score"] += frustrate_weight * 0.7
-            domain_scores[f"{kw}_strained"]["sources"].append(f"lord_{dig_label}_in_house")
+            domain_scores[kw]["score"] += frustrate_weight * 0.7
+            domain_scores[kw]["sources"].append(f"lord_{dig_label}_in_house")
+            domain_scores[kw]["valence_tags"] = domain_scores[kw].get("valence_tags", []) + ["strained"]
 
     # Decade palace
     decade = year_data.get("decade", {})
