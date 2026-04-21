@@ -310,7 +310,7 @@ def get_age_contextual_house_subject(house: int, age: int) -> str:
 
 def compute_profection(age: int, hellenistic: dict) -> dict:
     """Compute annual profection from Hellenistic chart data."""
-    asc_sign = hellenistic.get("ascendant", {}).get("sign", "Libra")
+    asc_sign = hellenistic.get("ascendant_sign") or hellenistic.get("ascendant", {}).get("sign", "Libra")
     planets = hellenistic.get("planets", [])
 
     house_number = (age % 12) + 1
@@ -782,7 +782,7 @@ def estimate_longevity(hellenistic: dict, zwds: dict) -> int:
 
     # Hellenistic: 8th house ruler dignity
     planets = hellenistic.get("planets", [])
-    asc_sign = hellenistic.get("ascendant", {}).get("sign", "Libra")
+    asc_sign = hellenistic.get("ascendant_sign") or hellenistic.get("ascendant", {}).get("sign", "Libra")
     signs = get_sign_sequence(asc_sign)
     eighth_sign = signs[7]
     eighth_ruler = TRADITIONAL_RULERS.get(eighth_sign, "Mars")
@@ -1102,6 +1102,54 @@ IMPORTANT: Write PART 1 first (all 8 portrait sections with ## headers), then wr
 async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = None) -> dict:
     """Full pipeline: fetch charts → compute layers → score → return signals + prompt."""
 
+    # Normalize Hellenistic response: recompute sect from Sun position vs horizon
+    # Uses Sun longitude relative to Ascendant-Descendant axis for accuracy near horizon
+    SIGN_ORDER = ["Aries","Taurus","Gemini","Cancer","Leo","Virgo","Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"]
+    def _sign_to_deg(sign, deg_in_sign):
+        try:
+            return SIGN_ORDER.index(sign) * 30.0 + float(deg_in_sign)
+        except (ValueError, TypeError):
+            return None
+
+    def _normalize_hellenistic(h):
+        if not isinstance(h, dict):
+            return h
+        # Use Sun's absolute ecliptic longitude vs Ascendant-Descendant line.
+        # Day chart = Sun above the horizon (between Descendant and Ascendant going through MC).
+        # Night chart = Sun below the horizon (between Ascendant and Descendant going through IC).
+        sun = None
+        for p in h.get("planets", []):
+            if p.get("name", "").lower() == "sun":
+                sun = p
+                break
+        if sun is None:
+            return h
+
+        sun_lon = sun.get("longitude")
+        asc_sign = h.get("ascendant_sign")
+        asc_deg = h.get("ascendant_degree")
+        asc_lon = _sign_to_deg(asc_sign, asc_deg) if asc_sign is not None else None
+
+        correct_sect = None
+        if sun_lon is not None and asc_lon is not None:
+            # Position of Sun relative to Ascendant (0-360 going zodiacally).
+            # Houses 12, 11, 10, 9, 8, 7 are above horizon (ASC minus 180 deg back through MC).
+            # In ecliptic longitude terms: day when (sun_lon - asc_lon) mod 360 >= 180.
+            rel = (float(sun_lon) - float(asc_lon)) % 360.0
+            correct_sect = "day" if rel >= 180.0 else "night"
+        else:
+            # Fallback to house-based rule if longitudes missing
+            sh = sun.get("house")
+            if sh is not None:
+                correct_sect = "day" if sh >= 7 else "night"
+
+        if correct_sect and h.get("sect") != correct_sect:
+            h["sect"] = correct_sect
+            h["sect_light"] = "Sun" if correct_sect == "day" else "Moon"
+            h["sect_benefic"] = "Jupiter" if correct_sect == "day" else "Venus"
+            h["sect_malefic"] = "Mars" if correct_sect == "day" else "Saturn"
+        return h
+
     # Check cache (key includes clarifying answers so different answers produce different readings)
     cache_input = {"birth": birth_data, "answers": clarifying_answers or {}}
     cache_key = hashlib.md5(json.dumps(cache_input, sort_keys=True).encode()).hexdigest()
@@ -1118,7 +1166,7 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
     if zwds_resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"ZWDS engine error: {zwds_resp.text}")
 
-    hellenistic = hell_resp.json()
+    hellenistic = _normalize_hellenistic(hell_resp.json())
     zwds = zwds_resp.json()
 
     # Extract birth info
@@ -1181,7 +1229,7 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         "longevity_estimate": longevity,
         "nayin": nayin_data,
         "hellenistic_summary": {
-            "ascendant": hellenistic.get("ascendant", {}),
+            "ascendant": {"sign": hellenistic.get("ascendant_sign"), "degree": hellenistic.get("ascendant_degree")},
             "sect": hellenistic.get("sect", ""),
             "planets": len(hellenistic.get("planets", [])),
         },
@@ -1225,7 +1273,7 @@ async def get_clarifying_questions(data: BirthInput):
         raise HTTPException(status_code=502, detail=f"Hellenistic engine error: {hell_resp.text}")
     if zwds_resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"ZWDS engine error: {zwds_resp.text}")
-    hellenistic = hell_resp.json()
+    hellenistic = _normalize_hellenistic(hell_resp.json())
     zwds = zwds_resp.json()
     nayin_data = zwds.get("nayin", {})
     questions = generate_clarifying_questions(nayin_data, hellenistic, zwds)
@@ -1247,7 +1295,7 @@ async def get_signals(data: BirthInput):
         hell_resp = await client.post(f"{HELLENISTIC_URL}/chart", json=birth_data)
         zwds_resp = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
 
-    hellenistic = hell_resp.json()
+    hellenistic = _normalize_hellenistic(hell_resp.json())
     zwds = zwds_resp.json()
 
     birth_year = int(birth_data["birth_date"].split("-")[0])
@@ -1298,4 +1346,4 @@ async def get_longevity(data: BirthInput):
     async with httpx.AsyncClient(timeout=30.0) as client:
         hell_resp = await client.post(f"{HELLENISTIC_URL}/chart", json=birth_data)
         zwds_resp = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
-    return {"longevity_estimate": estimate_longevity(hell_resp.json(), zwds_resp.json())}
+    return {"longevity_estimate": estimate_longevity(_normalize_hellenistic(hell_resp.json()), zwds_resp.json())}
