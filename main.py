@@ -1159,6 +1159,16 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
+        # Expose a top-level confidence string for clients that don't parse themes array
+        _themes = year_data["themes"]
+        if any(t.get("confidence") == "HIGH" for t in _themes):
+            year_data["confidence"] = "HIGH"
+        elif any(t.get("confidence") == "MEDIUM" for t in _themes):
+            year_data["confidence"] = "MEDIUM"
+        elif _themes:
+            year_data["confidence"] = "LOW"
+        else:
+            year_data["confidence"] = "NONE"
         all_years.append(year_data)
 
     # Build LLM prompt (for Base44 InvokeLLM to use)
@@ -1267,6 +1277,16 @@ async def get_signals(data: BirthInput):
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
+        # Expose a top-level confidence string for clients that don't parse themes array
+        _themes = year_data["themes"]
+        if any(t.get("confidence") == "HIGH" for t in _themes):
+            year_data["confidence"] = "HIGH"
+        elif any(t.get("confidence") == "MEDIUM" for t in _themes):
+            year_data["confidence"] = "MEDIUM"
+        elif _themes:
+            year_data["confidence"] = "LOW"
+        else:
+            year_data["confidence"] = "NONE"
         all_years.append(year_data)
 
     return {"longevity": longevity, "signals": all_years}
