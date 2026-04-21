@@ -1,6 +1,10 @@
+
 __pycache__/
 *.py[cod]
 *$py.class
 .env
 .venv/
 venv/
+
+# Local ad-hoc test scripts (not formal tests — those go in tests/)
+_test_*.py

@@ -1099,56 +1099,67 @@ IMPORTANT: Write PART 1 first (all 8 portrait sections with ## headers), then wr
 # MASTER ORCHESTRATOR
 # ═══════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════
+# HELLENISTIC NORMALIZATION (module scope so all endpoints can use it)
+# ═══════════════════════════════════════════════════════════
+
+def _sign_to_deg(sign, deg_in_sign):
+    """Convert (sign, degree-in-sign) to absolute ecliptic longitude 0-360."""
+    try:
+        return SIGN_ORDER.index(sign) * 30.0 + float(deg_in_sign)
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalize_hellenistic(h):
+    """
+    Normalize Hellenistic engine response:
+    - Override sect from Sun position vs Ascendant-Descendant axis (the engine returns wrong
+      sect for some day births; we recompute from absolute longitudes).
+    - Cascade sect_light / sect_benefic / sect_malefic to match corrected sect.
+    Safe to call on any response shape; no-op if required fields missing.
+    """
+    if not isinstance(h, dict):
+        return h
+    # Use Sun's absolute ecliptic longitude vs Ascendant-Descendant line.
+    # Day chart = Sun above the horizon (houses 7-12).
+    # Night chart = Sun below the horizon (houses 1-6).
+    sun = None
+    for p in h.get("planets", []):
+        if p.get("name", "").lower() == "sun":
+            sun = p
+            break
+    if sun is None:
+        return h
+
+    sun_lon = sun.get("longitude")
+    asc_sign = h.get("ascendant_sign")
+    asc_deg = h.get("ascendant_degree")
+    asc_lon = _sign_to_deg(asc_sign, asc_deg) if asc_sign is not None else None
+
+    correct_sect = None
+    if sun_lon is not None and asc_lon is not None:
+        # Sun longitude relative to Ascendant, zodiacally.
+        # Day when Sun is between Descendant and Ascendant going through MC
+        # i.e. (sun_lon - asc_lon) mod 360 >= 180.
+        rel = (float(sun_lon) - float(asc_lon)) % 360.0
+        correct_sect = "day" if rel >= 180.0 else "night"
+    else:
+        # Fallback to house-based rule if longitudes missing
+        sh = sun.get("house")
+        if sh is not None:
+            correct_sect = "day" if sh >= 7 else "night"
+
+    if correct_sect and h.get("sect") != correct_sect:
+        h["sect"] = correct_sect
+        h["sect_light"] = "Sun" if correct_sect == "day" else "Moon"
+        h["sect_benefic"] = "Jupiter" if correct_sect == "day" else "Venus"
+        h["sect_malefic"] = "Mars" if correct_sect == "day" else "Saturn"
+    return h
+
+
 async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = None) -> dict:
     """Full pipeline: fetch charts → compute layers → score → return signals + prompt."""
-
-    # Normalize Hellenistic response: recompute sect from Sun position vs horizon
-    # Uses Sun longitude relative to Ascendant-Descendant axis for accuracy near horizon
-    SIGN_ORDER = ["Aries","Taurus","Gemini","Cancer","Leo","Virgo","Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"]
-    def _sign_to_deg(sign, deg_in_sign):
-        try:
-            return SIGN_ORDER.index(sign) * 30.0 + float(deg_in_sign)
-        except (ValueError, TypeError):
-            return None
-
-    def _normalize_hellenistic(h):
-        if not isinstance(h, dict):
-            return h
-        # Use Sun's absolute ecliptic longitude vs Ascendant-Descendant line.
-        # Day chart = Sun above the horizon (between Descendant and Ascendant going through MC).
-        # Night chart = Sun below the horizon (between Ascendant and Descendant going through IC).
-        sun = None
-        for p in h.get("planets", []):
-            if p.get("name", "").lower() == "sun":
-                sun = p
-                break
-        if sun is None:
-            return h
-
-        sun_lon = sun.get("longitude")
-        asc_sign = h.get("ascendant_sign")
-        asc_deg = h.get("ascendant_degree")
-        asc_lon = _sign_to_deg(asc_sign, asc_deg) if asc_sign is not None else None
-
-        correct_sect = None
-        if sun_lon is not None and asc_lon is not None:
-            # Position of Sun relative to Ascendant (0-360 going zodiacally).
-            # Houses 12, 11, 10, 9, 8, 7 are above horizon (ASC minus 180 deg back through MC).
-            # In ecliptic longitude terms: day when (sun_lon - asc_lon) mod 360 >= 180.
-            rel = (float(sun_lon) - float(asc_lon)) % 360.0
-            correct_sect = "day" if rel >= 180.0 else "night"
-        else:
-            # Fallback to house-based rule if longitudes missing
-            sh = sun.get("house")
-            if sh is not None:
-                correct_sect = "day" if sh >= 7 else "night"
-
-        if correct_sect and h.get("sect") != correct_sect:
-            h["sect"] = correct_sect
-            h["sect_light"] = "Sun" if correct_sect == "day" else "Moon"
-            h["sect_benefic"] = "Jupiter" if correct_sect == "day" else "Venus"
-            h["sect_malefic"] = "Mars" if correct_sect == "day" else "Saturn"
-        return h
 
     # Check cache (key includes clarifying answers so different answers produce different readings)
     cache_input = {"birth": birth_data, "answers": clarifying_answers or {}}
