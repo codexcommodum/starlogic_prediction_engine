@@ -20,6 +20,7 @@ import httpx
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
 from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
 from theme_bridge import build_year_themes, is_compression_year
+from natal_sihua import compute_natal_sihua_layer, contribute_natal_sihua_scores
 
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -569,8 +570,13 @@ def detect_cycles(age: int, history: dict) -> list:
 # CONVERGENCE SCORER
 # ═══════════════════════════════════════════════════════════
 
-def score_convergence(year_data: dict) -> dict:
+def score_convergence(year_data: dict, natal_sihua_layer: dict = None) -> dict:
     domain_scores = defaultdict(lambda: {"score": 0.0, "sources": []})
+
+    # NEW: Natal Sihua contribution (if v2 zwds fields present)
+    natal_findings = []
+    if natal_sihua_layer:
+        natal_findings = contribute_natal_sihua_scores(natal_sihua_layer, domain_scores)
 
     prof = year_data.get("profection", {})
     # Profection house keywords
@@ -738,6 +744,7 @@ def score_convergence(year_data: dict) -> dict:
                         for d in sorted_domains[:8]],
         "high_confidence_count": high_confidence_count,
         "compression_year": compression_flag,
+        "natal_findings": natal_findings,
     }
 
 
@@ -1191,6 +1198,9 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
     longevity = estimate_longevity(hellenistic, zwds)
     end_age = longevity  # generate signals through projected lifespan
 
+    # NEW: compute natal Sihua layer ONCE (lifetime-stable, not per-year)
+    natal_sihua_layer = compute_natal_sihua_layer(zwds)
+
     # Compute all 7 layers for each year
     history = {}
     all_years = []
@@ -1214,7 +1224,7 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
 
         history[age] = year_data
         year_data["cycles"] = detect_cycles(age, history)
-        year_data["convergence"] = score_convergence(year_data)
+        year_data["convergence"] = score_convergence(year_data, natal_sihua_layer)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
@@ -1247,7 +1257,9 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         "zwds_summary": {
             "life_palace": zwds.get("life_palace_branch", ""),
             "ju": f"{zwds.get('ju_element', '')} {zwds.get('ju_number', '')}",
+            "origin_palace": zwds.get("origin_palace_english"),
         },
+        "natal_sihua": natal_sihua_layer if natal_sihua_layer.get("has_v2_data") else None,
         "signals": all_years,
         "llm_prompt": llm_prompt,
     }
@@ -1316,6 +1328,9 @@ async def get_signals(data: BirthInput):
     life_palace_branch = zwds.get("life_palace_branch", "Wu")
     longevity = estimate_longevity(hellenistic, zwds)
 
+    # NEW: compute natal Sihua layer once
+    natal_sihua_layer = compute_natal_sihua_layer(zwds)
+
     history = {}
     all_years = []
     for age in range(longevity + 1):
@@ -1332,7 +1347,7 @@ async def get_signals(data: BirthInput):
         }
         history[age] = year_data
         year_data["cycles"] = detect_cycles(age, history)
-        year_data["convergence"] = score_convergence(year_data)
+        year_data["convergence"] = score_convergence(year_data, natal_sihua_layer)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
