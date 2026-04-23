@@ -573,10 +573,12 @@ def detect_cycles(age: int, history: dict) -> list:
 def score_convergence(year_data: dict, natal_sihua_layer: dict = None) -> dict:
     domain_scores = defaultdict(lambda: {"score": 0.0, "sources": []})
 
-    # NEW: Natal Sihua contribution (if v2 zwds fields present)
+    # Natal Sihua is intentionally NOT mixed into per-year scoring.
+    # It represents structural, lifelong chart characteristics and would
+    # flood every year with identical sources, breaking signal/noise.
+    # The natal layer is exposed separately at the top level of /reading
+    # for LLM prompt builders and UI to consume directly.
     natal_findings = []
-    if natal_sihua_layer:
-        natal_findings = contribute_natal_sihua_scores(natal_sihua_layer, domain_scores)
 
     prof = year_data.get("profection", {})
     # Profection house keywords
