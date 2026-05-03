@@ -20,6 +20,7 @@ import httpx
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
 from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
 from theme_bridge import build_year_themes, is_compression_year
+from narrative_bridge import build_year_narratives
 from natal_sihua import compute_natal_sihua_layer, contribute_natal_sihua_scores
 
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
@@ -1008,6 +1009,21 @@ The star-palace EFFECTS above are already age-calibrated. This guide is only for
 - Middle (40-59): career peak or pivot, teens at home, partnership maturity, legacy thinking
 - Senior (60+): consolidation, health focus, mentorship, wealth preservation, meaning-making
 
+═══ STRUCTURED NARRATIVE SIGNALS (DERIVED) ═══
+For each year you also receive OPPORTUNITIES and WARNINGS lines.
+These are deterministic, derived from the layers above and already routed by valence (favorable/forceful/visible/neutral/obstructed).
+
+How to use them:
+- Each entry has the form: [CONFIDENCE] theme — headline
+- Treat the headline as the SPINE of your prediction for that domain in that year
+- Translate each headline into a specific, falsifiable event the person will recognize
+- HIGH confidence entries → make bold concrete claims, this WILL happen
+- MEDIUM confidence entries → claim likely themes, expect probable arrival
+- OPPORTUNITY headlines map to positive event predictions
+- WARNING headlines map to cautionary event predictions (predict the actual event, not just "be careful")
+- If the year is also a COMPRESSION YEAR, treat each entry as its own independent stacked event
+- "none" on either line = no derived signal of that polarity; lean on the layer data above
+
 ═══ OUTPUT RULES ═══
 For EACH year:
 - Exactly 3 bullets (4 max for HIGH convergence years with major events)
@@ -1036,6 +1052,8 @@ For EACH year:
         convergence = yd.get("convergence", {"top_domains": []})
         themes = yd.get("themes", [])
         compression_year = yd.get("compression_year", False)
+        opportunities = yd.get("opportunities", [])
+        warnings = yd.get("warnings", [])
 
         block = f"""
 --- AGE {age} ({year}) ---
@@ -1047,7 +1065,9 @@ DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]
 STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
 CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
 THEMES (ZWDS-led, Hellenistic validates): {' | '.join([f"{t['theme']}[{t['confidence']}]" for t in themes[:5]]) if themes else 'no strong themes'}{' <<< COMPRESSION YEAR - 3+ themes at MEDIUM/HIGH' if compression_year else ''}
-THEME EVIDENCE: {'; '.join([f"{t['theme']}: ZWDS={'/'.join(t['zwds_evidence'][:2])}; Hel={t['hellenistic_strength']}" for t in themes[:3]]) if themes else ''}"""
+THEME EVIDENCE: {'; '.join([f"{t['theme']}: ZWDS={'/'.join(t['zwds_evidence'][:2])}; Hel={t['hellenistic_strength']}" for t in themes[:3]]) if themes else ''}
+OPPORTUNITIES: {'; '.join([f"[{o['confidence']}] {o['theme']} — {o['headline']}" for o in opportunities]) if opportunities else 'none'}
+WARNINGS: {'; '.join([f"[{w['confidence']}] {w['theme']} — {w['headline']}" for w in warnings]) if warnings else 'none'}"""
         year_blocks.append(block)
 
     footer = """
@@ -1230,6 +1250,10 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
+        # Narrative bridge: structured opportunities/warnings for Base44 LLM
+        _narratives = build_year_narratives(year_data["themes"], year_data["convergence"], year_data)
+        year_data["opportunities"] = _narratives["opportunities"]
+        year_data["warnings"] = _narratives["warnings"]
         # Expose a top-level confidence string for clients that don't parse themes array
         _themes = year_data["themes"]
         if any(t.get("confidence") == "HIGH" for t in _themes):
@@ -1353,6 +1377,10 @@ async def get_signals(data: BirthInput):
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
+        # Narrative bridge: structured opportunities/warnings for Base44 LLM
+        _narratives = build_year_narratives(year_data["themes"], year_data["convergence"], year_data)
+        year_data["opportunities"] = _narratives["opportunities"]
+        year_data["warnings"] = _narratives["warnings"]
         # Expose a top-level confidence string for clients that don't parse themes array
         _themes = year_data["themes"]
         if any(t.get("confidence") == "HIGH" for t in _themes):
