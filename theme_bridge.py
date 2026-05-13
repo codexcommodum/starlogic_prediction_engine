@@ -235,6 +235,23 @@ def validate_with_hellenistic(theme: str, year_data: dict, natal_planets: list =
         strength_points += 2
         evidence.append(f"year lord natally in H{lord_house}")
 
+    # Natal planet residency in primary/secondary houses.
+    # House topics are filtered through whatever planets actually live there.
+    # Sun+Moon in H7 makes any H7 profection a loud partnership year, etc.
+    for planet in (natal_planets or []):
+        planet_name = planet.get("name", "")
+        planet_house = planet.get("house", 0)
+        if planet_house in primary_houses:
+            if planet_name in theme_planets:
+                strength_points += 2
+                evidence.append(f"natal {planet_name} in primary H{planet_house}")
+            elif planet_name in ("Sun", "Moon"):
+                strength_points += 1
+                evidence.append(f"natal luminary {planet_name} in primary H{planet_house}")
+        elif planet_house in secondary_houses and planet_name in theme_planets:
+            strength_points += 1
+            evidence.append(f"natal {planet_name} in secondary H{planet_house}")
+
     # Dignity modifier on primary
     if lord_dignity in ("exaltation", "domicile") and (prof_house in primary_houses or lord_house in primary_houses):
         strength_points += 1
@@ -289,6 +306,8 @@ def compute_confidence(zwds_score: float, hellenistic: dict) -> str:
     strength = hellenistic.get("strength", "NONE")
     if strength == "STRONG" and zwds_score >= 0.4:
         return "HIGH"
+    if strength == "STRONG" and zwds_score < 0.4:
+        return "MEDIUM"  # Hellenistic chart structure alone -> MEDIUM
     if strength == "MODERATE" and zwds_score >= 0.4:
         return "MEDIUM"
     if zwds_score >= 0.8 and strength == "NONE":
@@ -315,6 +334,19 @@ def build_year_themes(year_data: dict, natal_palaces: list = None, natal_planets
     """
     age = year_data.get("age", 0)
     zwds_themes = detect_zwds_themes(year_data, natal_palaces or [])
+
+    # Hellenistic-driven theme injection — themes can fire from chart structure
+    # alone (profected-house contents, year lord nature). Critical for
+    # luminary-in-house signatures that ZWDS palace logic doesn't directly see.
+    for theme in THEMES:
+        if theme in zwds_themes:
+            continue
+        hel_check = validate_with_hellenistic(theme, year_data, natal_planets)
+        if hel_check["strength"] == "STRONG":
+            zwds_themes[theme] = {
+                "score": 0.0,
+                "evidence": ["no direct ZWDS signal - theme driven by Hellenistic chart structure"],
+            }
 
     results = []
     for theme, zwds_data in zwds_themes.items():
