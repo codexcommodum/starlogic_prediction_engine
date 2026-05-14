@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
+import asyncio
 
 # Age-specific star-palace interpretations
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
@@ -1403,3 +1404,222 @@ async def get_longevity(data: BirthInput):
         hell_resp = await client.post(f"{HELLENISTIC_URL}/chart", json=birth_data)
         zwds_resp = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
     return {"longevity_estimate": estimate_longevity(_normalize_hellenistic(hell_resp.json()), zwds_resp.json())}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Daily luck tier endpoints
+# ═══════════════════════════════════════════════════════════════════════════
+
+TIER_LADDER = ["Worst", "Bad", "Caution", "Fair", "Good", "Great", "Excellent"]
+
+GENERIC_TIER_ADVICE = {
+    "Excellent": "Make the move. Today the chart is aligned and major decisions land cleanly.",
+    "Great":     "Strong flow. Take initiative on what matters; the day supports it.",
+    "Good":      "Solid day. Steady progress favored over big swings.",
+    "Fair":      "Neutral. Standard pace. Nothing to push or avoid.",
+    "Caution":   "Slow down. Watch the small stuff. Defer commitments where you can.",
+    "Bad":       "Hard day. No signing, no starting, no fighting. Conserve.",
+    "Worst":     "Heavy. Rest if you can. No major decisions. The day is asking for stillness.",
+}
+
+
+def _zwds_base_tier(zwds_daily: dict, year_confidence: str = None) -> str:
+    """ZWDS daily score -> base tier. ZWDS is the primary signal source."""
+    s = zwds_daily.get("score", {})
+    net = s.get("net", 0)
+    active_fav = s.get("active_palace_favorable", 0)
+
+    if net >= 4 and active_fav >= 1:
+        base = "Excellent"
+    elif net >= 3:
+        base = "Great"
+    elif net >= 1:
+        base = "Good"
+    elif net == 0:
+        base = "Fair"
+    elif net == -1:
+        base = "Caution"
+    elif net == -2:
+        base = "Bad"
+    else:
+        base = "Worst"
+
+    # Year confidence acts as a ceiling: a LOW year can't produce Excellent days
+    if year_confidence == "LOW":
+        if base in ("Excellent", "Great"):
+            base = "Good"
+    elif year_confidence == "MEDIUM":
+        if base == "Excellent":
+            base = "Great"
+
+    return base
+
+
+def _hellenistic_modifier(hell_daily: dict) -> int:
+    """Hellenistic transits modify ±1 step from ZWDS base. Returns -1, 0, or +1."""
+    s = hell_daily.get("day_score", {})
+    net = s.get("net", 0)
+    tense = s.get("tense_count", 0)
+    favorable = s.get("favorable_count", 0)
+
+    if net >= 2 or favorable >= 3:
+        return +1
+    if net <= -2 or tense >= 3:
+        return -1
+    return 0
+
+
+def _shift_tier(base: str, delta: int) -> str:
+    idx = TIER_LADDER.index(base)
+    idx = max(0, min(len(TIER_LADDER) - 1, idx + delta))
+    return TIER_LADDER[idx]
+
+
+async def _compute_daily_tier(
+    client: httpx.AsyncClient,
+    birth_data: dict,
+    target_date: str,
+    year_confidence: str = None,
+    target_lat: float = None,
+    target_lon: float = None,
+    target_tz: float = None,
+) -> dict:
+    """One day's tier computation. Calls both sub-engines /daily endpoints."""
+    zwds_payload = {**birth_data, "target_date": target_date}
+    hell_payload = {**birth_data, "target_date": target_date}
+    if target_lat is not None:
+        hell_payload["target_latitude"] = target_lat
+        hell_payload["target_longitude"] = target_lon
+        hell_payload["target_timezone_offset"] = target_tz
+
+    zwds_resp, hell_resp = await asyncio.gather(
+        client.post(f"{ZWDS_URL}/daily", json=zwds_payload),
+        client.post(f"{HELLENISTIC_URL}/daily", json=hell_payload),
+    )
+
+    if zwds_resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"ZWDS /daily failed: {zwds_resp.text[:200]}")
+    if hell_resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Hellenistic /daily failed: {hell_resp.text[:200]}")
+
+    zwds = zwds_resp.json()
+    hell = hell_resp.json()
+
+    base_tier = _zwds_base_tier(zwds, year_confidence)
+    modifier = _hellenistic_modifier(hell)
+    final_tier = _shift_tier(base_tier, modifier)
+
+    # Hot domains for tailored advice (Pro tier consumes this)
+    hot_domains = []
+    if zwds.get("liu_ri_palace"):
+        hot_domains.append(zwds["liu_ri_palace"]["english"].lower())
+    for s in zwds.get("day_sihua", []):
+        if s["is_in_active_palace"]:
+            hot_domains.append(f"{s['target_palace_english'].lower()}_{s['type']}")
+
+    return {
+        "target_date": target_date,
+        "tier": final_tier,
+        "base_tier_from_zwds": base_tier,
+        "hellenistic_modifier": modifier,
+        "advice": GENERIC_TIER_ADVICE[final_tier],
+        "day_boundary": {
+            "sunrise_utc": hell.get("sunrise_utc"),
+            "next_sunrise_utc": hell.get("next_sunrise_utc"),
+        },
+        "hot_domains": hot_domains,
+        "zwds_summary": {
+            "day_pillar": zwds.get("day_pillar", {}).get("pillar"),
+            "liu_ri_palace": zwds.get("liu_ri_palace", {}).get("english") if zwds.get("liu_ri_palace") else None,
+            "score": zwds.get("score"),
+            "sihua_count": len(zwds.get("day_sihua", [])),
+        },
+        "hellenistic_summary": {
+            "moon_sign": hell.get("moon_sign"),
+            "moon_phase_angle": hell.get("moon_phase_angle"),
+            "score": hell.get("day_score"),
+            "tightest_aspects": sorted(
+                hell.get("transit_to_natal_aspects", []), key=lambda a: a["orb"]
+            )[:5],
+        },
+    }
+
+
+class DailyTierRequest(BirthData):
+    target_date: str
+    target_latitude: Optional[float] = None
+    target_longitude: Optional[float] = None
+    target_timezone_offset: Optional[float] = None
+    year_confidence: Optional[str] = None  # HIGH/MEDIUM/LOW from ConvergenceYear
+
+
+@app.post("/daily-tier")
+async def daily_tier(data: DailyTierRequest):
+    """Compute the luck tier for a single date. ZWDS primary, Hellenistic modifier."""
+    birth_data = {
+        "birth_date": data.birth_date,
+        "birth_time": data.birth_time,
+        "latitude": data.latitude,
+        "longitude": data.longitude,
+        "timezone_offset": data.timezone_offset,
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        return await _compute_daily_tier(
+            client, birth_data, data.target_date,
+            year_confidence=data.year_confidence,
+            target_lat=data.target_latitude,
+            target_lon=data.target_longitude,
+            target_tz=data.target_timezone_offset,
+        )
+
+
+class Forecast365Request(BirthData):
+    start_date: str                                  # YYYY-MM-DD
+    days: Optional[int] = 365
+    target_latitude: Optional[float] = None
+    target_longitude: Optional[float] = None
+    target_timezone_offset: Optional[float] = None
+
+
+@app.post("/forecast/365")
+async def forecast_365(data: Forecast365Request):
+    """Bulk daily forecast. Used for initial profile population and gap-fill top-ups."""
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        start = _dt.strptime(data.start_date, "%Y-%m-%d")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid start_date: {e}")
+
+    birth_data = {
+        "birth_date": data.birth_date,
+        "birth_time": data.birth_time,
+        "latitude": data.latitude,
+        "longitude": data.longitude,
+        "timezone_offset": data.timezone_offset,
+    }
+
+    days_to_compute = min(max(1, data.days or 365), 400)
+    target_dates = [(start + _td(days=i)).strftime("%Y-%m-%d") for i in range(days_to_compute)]
+
+    # Limit concurrency to avoid hammering sub-engines
+    semaphore = asyncio.Semaphore(8)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        async def one(td):
+            async with semaphore:
+                try:
+                    return await _compute_daily_tier(
+                        client, birth_data, td,
+                        target_lat=data.target_latitude,
+                        target_lon=data.target_longitude,
+                        target_tz=data.target_timezone_offset,
+                    )
+                except Exception as e:
+                    return {"target_date": td, "error": str(e)[:200]}
+
+        results = await asyncio.gather(*[one(td) for td in target_dates])
+
+    return {
+        "start_date": data.start_date,
+        "days_computed": len(results),
+        "days": results,
+    }
