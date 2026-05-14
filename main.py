@@ -1660,7 +1660,7 @@ async def _compute_daily_tier(
     }
 
 
-class DailyTierRequest(BirthData):
+class DailyTierRequest(BirthInput):
     target_date: str
     target_latitude: Optional[float] = None
     target_longitude: Optional[float] = None
@@ -1688,7 +1688,7 @@ async def daily_tier(data: DailyTierRequest):
         )
 
 
-class Forecast365Request(BirthData):
+class Forecast365Request(BirthInput):
     start_date: str                                  # YYYY-MM-DD
     days: Optional[int] = 365
     target_latitude: Optional[float] = None
