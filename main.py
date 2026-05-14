@@ -1475,6 +1475,113 @@ def _shift_tier(base: str, delta: int) -> str:
     return TIER_LADDER[idx]
 
 
+# Tier metadata: intensity (1-5), valence, color, icon
+TIER_METADATA = {
+    "Excellent": {"intensity": 5, "valence": "positive", "color_hex": "#10b981", "icon": "sun"},
+    "Great":     {"intensity": 4, "valence": "positive", "color_hex": "#22c55e", "icon": "sun"},
+    "Good":      {"intensity": 3, "valence": "positive", "color_hex": "#84cc16", "icon": "leaf"},
+    "Fair":      {"intensity": 1, "valence": "neutral",  "color_hex": "#a3a3a3", "icon": "cloud"},
+    "Caution":   {"intensity": 3, "valence": "negative", "color_hex": "#f59e0b", "icon": "alert-triangle"},
+    "Bad":       {"intensity": 4, "valence": "negative", "color_hex": "#ef4444", "icon": "alert-circle"},
+    "Worst":     {"intensity": 5, "valence": "negative", "color_hex": "#7c3aed", "icon": "moon"},
+}
+
+TIER_SUMMARY_PREFIX = {
+    "Excellent": "An exceptionally aligned day",
+    "Great":     "A strong day",
+    "Good":      "A solid day",
+    "Fair":      "A neutral day",
+    "Caution":   "A day to slow down",
+    "Bad":       "A challenging day",
+    "Worst":     "A heavy day",
+}
+
+# Favorable activities by domain (palace english name, lowercased)
+DOMAIN_FAVORABLE = {
+    "fortune":  ["pursue luck-dependent ventures", "make the bold ask", "play your hunches"],
+    "wealth":   ["review investments", "negotiate prices", "make planned purchases"],
+    "career":   ["sign contracts", "make the pitch", "ask for the raise"],
+    "spouse":   ["plan with your partner", "deepen the conversation", "make commitments"],
+    "siblings": ["reach out to siblings", "connect with peers", "short trips"],
+    "children": ["spend time with kids", "start creative projects", "celebrate small wins"],
+    "parents":  ["call home", "honor elders", "settle family matters warmly"],
+    "health":   ["start the fitness routine", "schedule the checkup", "rest fully"],
+    "travel":   ["book the trip", "make connections", "venture out"],
+    "property": ["sign property documents", "improve your home", "ground yourself"],
+    "friends":  ["network", "host friends", "deepen connections"],
+    "life":     ["take initiative on personal projects", "make decisions about your direction"],
+}
+
+DOMAIN_CAUTION = {
+    "fortune":  ["avoid speculation", "don't gamble", "skip the lottery"],
+    "wealth":   ["delay large purchases", "avoid new loans", "review budgets carefully"],
+    "career":   ["don't quit, don't sign", "defer difficult conversations", "watch reputation"],
+    "spouse":   ["avoid arguments", "defer big commitments", "give space"],
+    "siblings": ["watch words with peers", "skip the road trip", "delay communications"],
+    "children": ["extra patience with kids", "defer creative bets", "watch for accidents"],
+    "parents":  ["expect family friction", "defer hard conversations", "watch elder health"],
+    "health":   ["rest", "skip strenuous activity", "watch food and rest"],
+    "travel":   ["delay the trip if possible", "double-check bookings", "expect delays"],
+    "property": ["delay property decisions", "watch home maintenance", "don't sign deeds"],
+    "friends":  ["watch alliances", "skip the party", "avoid drama"],
+    "life":     ["defer big personal decisions", "rest and reflect"],
+}
+
+
+def _extract_primary_domain(hot_domains):
+    """First hot domain (palace name without sihua suffix)."""
+    if not hot_domains:
+        return None
+    raw = hot_domains[0]
+    # Strip sihua suffix if present: "career_lu" -> "career"
+    return raw.split("_")[0].lower()
+
+
+def _compute_convergence_count(zwds_score: dict, hellenistic_modifier: int) -> int:
+    """How many voters fire in the same direction as the final tier. V1 maxes at 2."""
+    zwds_net = zwds_score.get("net", 0) if zwds_score else 0
+    zwds_vote = 1 if zwds_net > 0 else (-1 if zwds_net < 0 else 0)
+    hell_vote = 1 if hellenistic_modifier > 0 else (-1 if hellenistic_modifier < 0 else 0)
+    # Convergence: both voting in same direction (and not zero)
+    if zwds_vote != 0 and hell_vote != 0 and zwds_vote == hell_vote:
+        return 2
+    if zwds_vote != 0 or hell_vote != 0:
+        return 1
+    return 0
+
+
+def _build_tier_extras(tier: str, hot_domains: list, zwds_score: dict, hell_modifier: int) -> dict:
+    """Derive tier_intensity, valence, color, icon, summary, activities, cautions."""
+    meta = TIER_METADATA.get(tier, TIER_METADATA["Fair"])
+    primary_domain = _extract_primary_domain(hot_domains)
+
+    if meta["valence"] == "positive":
+        activities = DOMAIN_FAVORABLE.get(primary_domain, []) if primary_domain else []
+        cautions = []
+    elif meta["valence"] == "negative":
+        activities = []
+        cautions = DOMAIN_CAUTION.get(primary_domain, []) if primary_domain else []
+    else:  # neutral
+        activities = []
+        cautions = []
+
+    if primary_domain and meta["valence"] != "neutral":
+        summary = f"{TIER_SUMMARY_PREFIX[tier]} for {primary_domain}."
+    else:
+        summary = f"{TIER_SUMMARY_PREFIX[tier]}."
+
+    return {
+        "tier_intensity": meta["intensity"],
+        "valence": meta["valence"],
+        "color_hex": meta["color_hex"],
+        "icon": meta["icon"],
+        "summary": summary,
+        "favorable_activities": activities,
+        "caution_areas": cautions,
+        "convergence_count": _compute_convergence_count(zwds_score, hell_modifier),
+    }
+
+
 async def _compute_daily_tier(
     client: httpx.AsyncClient,
     birth_data: dict,
@@ -1517,9 +1624,17 @@ async def _compute_daily_tier(
         if s["is_in_active_palace"]:
             hot_domains.append(f"{s['target_palace_english'].lower()}_{s['type']}")
 
+    extras = _build_tier_extras(
+        final_tier,
+        [d for d in hot_domains],
+        zwds.get("score"),
+        modifier,
+    )
+
     return {
         "target_date": target_date,
         "tier": final_tier,
+        **extras,
         "base_tier_from_zwds": base_tier,
         "hellenistic_modifier": modifier,
         "advice": GENERIC_TIER_ADVICE[final_tier],
