@@ -9,6 +9,8 @@ All statements rewritten in plain English — no astrological jargon in user-vis
 Universal: every branch covers a chart category, not a specific person.
 """
 
+from nayin_archetypes import NAYIN_ARCHETYPES, visibility_impact_text, strength_impact_text
+
 # ═══════════════════════════════════════════════════════════
 # NAYIN CATEGORIZATION
 # ═══════════════════════════════════════════════════════════
@@ -71,52 +73,50 @@ def find_palace_stars(zwds_palaces: list, target_palace: str) -> list:
 # ═══════════════════════════════════════════════════════════
 
 def q1_nayin_visibility(nayin_data: dict) -> dict:
+    """Visibility question — uses 30 unique Nayin-specific variants from NAYIN_ARCHETYPES."""
     pinyin = nayin_data.get("pinyin", "")
+    arch = NAYIN_ARCHETYPES.get(pinyin)
 
-    if pinyin in NAYIN_VISIBILITY_HIDDEN:
-        statement = ("Your life builds quietly, out of sight, for years before people notice. "
-                     "TRUE: I'm okay with that. I can work for a long time without recognition. "
-                     "FALSE: I want visible progress now. Slow, invisible work frustrates me.")
-    elif pinyin in NAYIN_VISIBILITY_EXPOSED:
-        statement = ("Your life operates in the open. What you do is visible from the start. "
-                     "TRUE: I do my best work when people can see it. I need a stage. "
-                     "FALSE: I prefer working behind the scenes. Being visible drains me.")
+    if arch:
+        statement = arch["visibility_statement"]
+        vis_class = arch["visibility_class"]
     else:
+        # Fallback for unknown Nayin codes - mixed phases statement
         statement = ("Your life has both visible and hidden phases. "
                      "TRUE: I want progress I can show people. "
                      "FALSE: I'd rather do long, quiet work that pays off later.")
+        vis_class = "mixed"
 
     return {
         "id": "q1_nayin_visibility",
         "tier": 1,
         "fork": "visibility",
         "statement": statement,
-        "impact": "If TRUE: interpret toward public-facing outcomes (recognition, visible milestones). If FALSE: interpret toward long compound arcs, late-blooming wins.",
+        "impact": f"If TRUE: aligns with chart - {visibility_impact_text(vis_class)}. If FALSE: user diverges from chart - tilt toward the opposite direction.",
     }
 
 
 def q2_nayin_strength(nayin_data: dict) -> dict:
+    """Strength/pressure-response question - uses 30 unique Nayin-specific variants."""
     pinyin = nayin_data.get("pinyin", "")
+    arch = NAYIN_ARCHETYPES.get(pinyin)
 
-    if pinyin in NAYIN_STRENGTH_ENDURING:
-        statement = ("When life breaks you, you take the hit fully - and take a long time to rebuild. "
-                     "TRUE: Setbacks cut deep. I don't bounce back fast, but when I come back I'm stronger than before. "
-                     "FALSE: I move on quickly from setbacks. I don't dwell.")
-    elif pinyin in NAYIN_STRENGTH_ADAPTIVE:
-        statement = ("You adapt and reshape yourself when life pressures you, rather than holding your ground. "
-                     "TRUE: I change direction easily. I don't stay attached to old plans that stop working. "
-                     "FALSE: Once I commit to a path, I stick with it even when it stops working.")
+    if arch:
+        statement = arch["strength_statement"]
+        str_class = arch["strength_class"]
     else:
+        # Fallback for unknown Nayin codes
         statement = ("How you handle pressure shapes how your life unfolds. "
                      "TRUE: I adapt and move. I reshape as needed. "
                      "FALSE: I hold ground. I wait it out.")
+        str_class = "balanced"
 
     return {
         "id": "q2_nayin_strength",
         "tier": 1,
         "fork": "strength",
         "statement": statement,
-        "impact": "If TRUE (adaptive): predict pivots, resets, new beginnings after setbacks. If FALSE (enduring): predict long single arcs with deep recovery periods.",
+        "impact": f"If TRUE: aligns with chart - {strength_impact_text(str_class)}. If FALSE: user diverges from chart - tilt toward the opposite mode.",
     }
 
 
