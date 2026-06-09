@@ -23,6 +23,7 @@ from clarifying_questions import generate_clarifying_questions, format_answers_f
 from theme_bridge import build_year_themes, is_compression_year
 from narrative_bridge import build_year_narratives
 from natal_sihua import compute_natal_sihua_layer, contribute_natal_sihua_scores
+from bridge_format import build_year_narratives_array, build_eras, build_landmarks
 
 app = FastAPI(title="Starlogic Prediction Engine", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -824,9 +825,14 @@ def estimate_longevity(hellenistic: dict, zwds: dict) -> int:
 # LAYER 8: LLM PROMPT + CLAUDE CALL
 # ═══════════════════════════════════════════════════════════
 
-def build_llm_prompt(all_years: list, nayin_data: dict, longevity: int, user_stance: str = "") -> str:
-    """Build ONE prompt: full interpretation engine + per-year signals."""
-
+def build_llm_prompt(all_years: list, nayin_data: dict, longevity: int,
+                     eras: list = None, landmarks: list = None,
+                     current_age: int = None, user_stance: str = "") -> str:
+    """Build ONE JSON-output prompt: portrait + era narratives + landmark deep-dives.
+    Per-year data is deterministic (year_narratives) and NOT requested here, so the
+    LLM call is scoped to synthesis only — keeping the prompt small and on-budget."""
+    eras = eras or []
+    landmarks = landmarks or []
     engine_framework = f"""You are the Starlogic Prediction Engine. You receive pre-computed astrological signals and translate them into life predictions using the interpretation framework below. Follow it exactly.
 
 ═══ PERSON'S FOUNDATION ═══
@@ -1009,120 +1015,112 @@ The star-palace EFFECTS above are already age-calibrated. This guide is only for
 - Adult (20-39): education, career building, marriage, first property, first children
 - Middle (40-59): career peak or pivot, teens at home, partnership maturity, legacy thinking
 - Senior (60+): consolidation, health focus, mentorship, wealth preservation, meaning-making
-
-═══ STRUCTURED NARRATIVE SIGNALS (DERIVED) ═══
-For each year you also receive OPPORTUNITIES and WARNINGS lines.
-These are deterministic, derived from the layers above and already routed by valence (favorable/forceful/visible/neutral/obstructed).
-
-How to use them:
-- Each entry has the form: [CONFIDENCE] theme — headline
-- Treat the headline as the SPINE of your prediction for that domain in that year
-- Translate each headline into a specific, falsifiable event the person will recognize
-- HIGH confidence entries → make bold concrete claims, this WILL happen
-- MEDIUM confidence entries → claim likely themes, expect probable arrival
-- OPPORTUNITY headlines map to positive event predictions
-- WARNING headlines map to cautionary event predictions (predict the actual event, not just "be careful")
-- If the year is also a COMPRESSION YEAR, treat each entry as its own independent stacked event
-- "none" on either line = no derived signal of that polarity; lean on the layer data above
-
-═══ OUTPUT RULES ═══
-For EACH year:
-- Exactly 3 bullets (4 max for HIGH convergence years with major events)
-- Each bullet ONE sentence under 15 words
-- SPECIFIC and FALSIFIABLE — testable against real events
-- Use concrete nouns: "property purchase" not "material expansion", "job change" not "career transition"
-- Never mention astrology terms, mechanics, layers, dignities, or signal codes
-- Never say "you may", "could", "might" — make real predictions
-- HIGH confidence + specific stars = bold concrete claims
-- Deliver predictions through the person's nayin lens (hidden = invisible buildup, exposed = public events)
-
-═══ YEAR-BY-YEAR SIGNALS (THE DATA) ═══
 """
 
-    year_blocks = []
-    for yd in all_years:
-        age = yd["age"]
-        year = yd["year"]
-        prof = yd["profection"]
-        nayin = yd["nayin"]
-        annual = yd["annual"]
-        decade = yd["decade"]
-        aspects = yd["aspects"]
-        stem_branch = yd["stem_branch"]
-        cycles = yd.get("cycles", [])
-        convergence = yd.get("convergence", {"top_domains": []})
-        themes = yd.get("themes", [])
-        compression_year = yd.get("compression_year", False)
-        opportunities = yd.get("opportunities", [])
-        warnings = yd.get("warnings", [])
+    by_age = {y["age"]: y for y in all_years if "age" in y}
 
-        block = f"""
---- AGE {age} ({year}) ---
-NAYIN: {nayin['stem_relation']}({nayin['stem_element']}→native) + {nayin['branch_relation']}({nayin['branch_element']}→native) = support:{nayin['composite_support']:.2f} {'BIRTH_STEM_RETURN' if nayin['birth_stem_return'] else ''} {'JIAZI_RETURN' if nayin.get('jiazi_return') else ''}
-PROFECTION: H{prof['house']} ({prof['house_themes']['short']}) - age-contextual subject: {get_age_contextual_house_subject(prof['house'], age)} | Lord={prof['lord']} {prof['lord_dignity']}({prof['dignity_score']}) in H{prof['lord_house']} ({prof['lord_house_themes']['short']}) - lord-house subject: {get_age_contextual_house_subject(prof['lord_house'], age)} {'Rx' if prof.get('lord_retrograde') else ''}
-ASPECTS FIRED: {'; '.join([f"{a['other_planet']} {a['aspect_type']} orb={a['orb']}° H{a['other_house']}" + (' SECT_LIGHT' if a.get('is_sect_light') else '') for a in aspects[:3]]) if aspects else 'none'}
-ANNUAL: {annual.get('palace_name','')} [{', '.join(annual.get('stars_english',[]))}] EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in annual.get('star_palace_effects',[])])}
-DECADE: {decade.get('palace_name','')} [{', '.join(decade.get('stars_english',[]))}] {decade.get('position','')} EFFECTS (age-calibrated): {'; '.join([se['effect'] for se in decade.get('star_palace_effects',[])])}
-STEM-BRANCH: {stem_branch['stem']} {stem_branch['branch']} internal={stem_branch['internal_harmony']} to_life={stem_branch['branch_to_life_palace']}
-CYCLES: {'; '.join([f"{c['type']}{'='+c.get('palace','') if c.get('palace') else ''}{'='+c.get('maturity','') if c.get('maturity') else ''}" for c in cycles]) if cycles else 'none'}
-THEMES (ZWDS-led, Hellenistic validates): {' | '.join([f"{t['theme']}[{t['confidence']}]" for t in themes[:5]]) if themes else 'no strong themes'}{' <<< COMPRESSION YEAR - 3+ themes at MEDIUM/HIGH' if compression_year else ''}
-THEME EVIDENCE: {'; '.join([f"{t['theme']}: ZWDS={'/'.join(t['zwds_evidence'][:2])}; Hel={t['hellenistic_strength']}" for t in themes[:3]]) if themes else ''}
-OPPORTUNITIES: {'; '.join([f"[{o['confidence']}] {o['theme']} — {o['headline']}" for o in opportunities]) if opportunities else 'none'}
-WARNINGS: {'; '.join([f"[{w['confidence']}] {w['theme']} — {w['headline']}" for w in warnings]) if warnings else 'none'}"""
-        year_blocks.append(block)
+    now_line = ""
+    if current_age is not None:
+        now_line = (f"\nThe person is CURRENTLY age {current_age}. Treat retrospective eras/years "
+                    f"as already lived (past tense), the current era as unfolding now, and "
+                    f"predictive eras/years as the future.\n")
 
-    footer = """
+    # ── Per-era digests (replace the old 81-year dump) ──
+    era_lines = []
+    for era in eras:
+        s, e = era["age_range"]
+        yrs = [by_age[a] for a in range(s, e + 1) if a in by_age]
+        dpalaces = []
+        for y in yrs:
+            pn = (y.get("decade", {}) or {}).get("palace_name", "")
+            if pn and pn not in dpalaces:
+                dpalaces.append(pn)
+        hi = []
+        for y in yrs:
+            for o in y.get("opportunities", []):
+                if o.get("confidence") in ("HIGH", "MEDIUM"):
+                    hi.append(f"  - age {y['age']}: [{o['confidence']}] {o['theme']} — {o['headline']}")
+            for w in y.get("warnings", []):
+                if w.get("confidence") in ("HIGH", "MEDIUM"):
+                    hi.append(f"  - age {y['age']}: [{w['confidence']}] {w['theme']} (warning) — {w['headline']}")
+        era_lines.append(
+            f"\n--- ERA {era['era_number']}: {era['label']} (ages {s}-{e}) [{era['tense']}] ---\n"
+            f"Profection houses across era: {era.get('profection_arc')}\n"
+            f"Da Xian (decade) palace(s) active: {', '.join(dpalaces) if dpalaces else 'n/a'}\n"
+            f"Dominant themes: {', '.join(era.get('top_themes') or []) or 'none strong'}\n"
+            f"Compression ages: {era.get('compression_ages') or 'none'}\n"
+            f"Decade transitions: {'; '.join(era.get('decade_transitions') or []) or 'none'}\n"
+            f"Signal highlights (ground the narrative in these, invent nothing beyond them):\n"
+            + ("\n".join(hi) if hi else "  - (no HIGH/MEDIUM signals this era — keep it brief and quiet)")
+        )
+    era_section = "\n═══ ERA DIGESTS (write one narrative per era) ═══\n" + "\n".join(era_lines)
 
-=== OUTPUT FORMAT - TWO PARTS ===
+    # ── Landmark digests ──
+    lm_lines = []
+    for lm in landmarks:
+        y = by_age.get(lm["age"], {})
+        ops = [f"[{o['confidence']}] {o['theme']} — {o['headline']}"
+               for o in y.get("opportunities", []) if o.get("confidence") in ("HIGH", "MEDIUM")]
+        wns = [f"[{w['confidence']}] {w['theme']} — {w['headline']}"
+               for w in y.get("warnings", []) if w.get("confidence") in ("HIGH", "MEDIUM")]
+        lm_lines.append(
+            f"\n--- LANDMARK age {lm['age']} ({lm['year']}) [{lm['tense']}] ---\n"
+            f"Why it matters: {', '.join(lm.get('reasons') or [])}\n"
+            f"Opportunities: {'; '.join(ops) if ops else 'none'}\n"
+            f"Warnings: {'; '.join(wns) if wns else 'none'}"
+        )
+    landmark_section = "\n\n═══ LANDMARK DIGESTS (one deep-dive paragraph per landmark) ═══\n" + "\n".join(lm_lines)
 
-PART 1: PERSONALITY PORTRAIT (write these 8 sections first)
+    # ── Required output keys, enumerated from the data so the model returns matching entries ──
+    era_spec = "\n".join(
+        f'  - era_number {era["era_number"]}: title "{era["label"]}", age_range {era["age_range"]}, tense "{era["tense"]}"'
+        for era in eras)
+    lm_spec = "\n".join(
+        f'  - age {lm["age"]} (year {lm["year"]}), tense "{lm["tense"]}"'
+        for lm in landmarks)
 
-Write 8 sections, each beginning with a markdown H2 header exactly as shown below.
-Each section is ~150-200 words of second-person prose (starts with "You..."). No jargon.
-No references to "nayin", "sect", "benefic", "malefic", "palace", "Qi Sha", "Po Jun", "Tan Lang", "Wu Qu", "Zi Wei", "Tian Fu", "profection", or any astrological term.
-Translate astrological concepts into plain human language the reader can feel.
+    output_rules = f"""
+{now_line}
+═══ OUTPUT FORMAT — RETURN JSON ONLY ═══
+Return a SINGLE JSON object and nothing else. You may wrap it in ```json fences.
+Do NOT output markdown headers, prose outside the JSON, or year-by-year bullets
+(those are rendered deterministically by the app, not by you).
 
-Write in a grounded, honest, slightly reverent tone. Direct. No filler.
-Use the 9 user stance answers above to TILT each section - if the chart suggests X but the user's stance confirms Y, trust the stance.
+Schema (use these EXACT keys):
+{{
+  "portrait": {{
+    "soul_element": str, "nature": str, "strengths": str, "shadows": str,
+    "relationships": str, "luck": str, "core_drive": str, "timing": str
+  }},
+  "era_narratives": [
+    {{ "era_number": int, "title": str, "age_range": [int,int], "tense": str, "body": str }}
+  ],
+  "landmark_narratives": [
+    {{ "age": int, "year": int, "tense": str, "body": str }}
+  ]
+}}
 
-## Your Soul Element
-Describe what their nayin IS (the image - gold in the sea, fire on a hilltop, etc.) and what kind of person this makes them at the foundational material level. How they are built. What this essence does in the world.
+PORTRAIT — all 8 fields, ~150-200 words each, second-person ("You..."), no jargon
+(never say nayin, sect, palace, profection, Qi Sha, Po Jun, Zi Wei, dignity, etc.).
+"soul_element" MUST open by naming their soul-element image and what it makes them —
+this is the mandatory opening frame of the whole reading.
 
-## Your Nature
-Their temperament. How they move through the world. Day-born vs night-born expression. Rhythm of their internal life. How they process information and make decisions.
+ERA_NARRATIVES — return EXACTLY one entry per era below, in order. ~250-300 words each,
+second-person, grounded in that era's signal highlights. Match these keys exactly:
+{era_spec}
 
-## Your Strengths
-The 2-4 things their chart shows they are genuinely built to do well. Specific, not generic. Drawn from dignified placements and strong palace/star combinations.
+LANDMARK_NARRATIVES — return EXACTLY one entry per landmark below. ~100-150 words each,
+focused on that single year's event. Match these:
+{lm_spec}
 
-## Your Shadows
-The recurring patterns that trip them up. Blind spots. Where they struggle. Drawn from fallen/weak placements. Honest without being cruel.
+GROUNDING: every claim must trace to a signal in the digests above. Do not invent
+events, dates, names, or outcomes that the signals do not support. Deliver predictions
+through the person's soul-element lens (hidden essence = invisible buildup surfacing
+later; exposed essence = same-year visible events). Use the user stance answers to tilt
+tone where the chart is ambiguous. Be specific and falsifiable; avoid "may/might/could".
+"""
 
-## Your Relationships
-How they show up in close bonds - romantic, familial, friendship. What they offer. What they struggle with. What kind of partner fits them best.
-
-## Your Luck
-Their overall luck flavor. Where fortune tends to land. Where it tends to slip. Protected / tested / rupture-prone / steady-builder / wealth-favored / relationally-favored - pick the archetype that fits this specific chart.
-
-## Your Core Drive
-What their life is fundamentally aimed at. The deeper mission their chart points to. What they are HERE to do.
-
-## Your Timing
-How their life unfolds. Hidden essence = invisible buildup, late bloom, seeds planted now surface in decades. Exposed essence = events and visibility land same-year. Describe their specific rhythm.
-
----
-
-PART 2: YEAR-BY-YEAR TIMELINE (write all years AFTER the portrait, using this format)
-
-**Age X (YYYY)**
-- prediction
-- prediction
-- prediction
-
-Generate predictions for EVERY year listed in the signals above. One sentence per bullet. Under 15 words each. Read the signals through the interpretation framework above - don't just restate the codes.
-
-IMPORTANT: Write PART 1 first (all 8 portrait sections with ## headers), then write PART 2 (all year-by-year predictions). Do not mix them. Do not skip either part."""
-
-    return engine_framework + "\n".join(year_blocks) + footer
+    return engine_framework + era_section + landmark_section + output_rules
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1267,10 +1265,16 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
             year_data["confidence"] = "NONE"
         all_years.append(year_data)
 
-    # Build LLM prompt (for Base44 InvokeLLM to use)
+    # ── Additive bridge layer: reshape signals into the frontend contract ──
+    current_age = datetime.now().year - birth_year
+    year_narratives = build_year_narratives_array(all_years)
+    eras = build_eras(all_years, current_age)
+    landmarks = build_landmarks(all_years, current_age)
+
+    # Build LLM prompt (for Base44 InvokeLLM) — JSON synthesis output
     questions = generate_clarifying_questions(nayin_data, hellenistic, zwds)
     user_stance = format_answers_for_llm(questions, clarifying_answers) if clarifying_answers else ""
-    llm_prompt = build_llm_prompt(all_years, nayin_data, longevity, user_stance)
+    llm_prompt = build_llm_prompt(all_years, nayin_data, longevity, eras, landmarks, current_age, user_stance)
 
     result = {
         "birth_data": birth_data,
@@ -1288,6 +1292,10 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         },
         "natal_sihua": natal_sihua_layer if natal_sihua_layer.get("has_v2_data") else None,
         "signals": all_years,
+        "current_age": current_age,
+        "year_narratives": year_narratives,
+        "eras": eras,
+        "landmarks": landmarks,
         "llm_prompt": llm_prompt,
     }
 
