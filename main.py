@@ -1100,17 +1100,33 @@ Schema (use these EXACT keys):
   ]
 }}
 
-PORTRAIT — all 8 fields, ~150-200 words each, second-person ("You..."), no jargon
-(never say nayin, sect, palace, profection, Qi Sha, Po Jun, Zi Wei, dignity, etc.).
-"soul_element" MUST open by naming their soul-element image and what it makes them —
-this is the mandatory opening frame of the whole reading.
+VOICE & STYLE — write as a Vietnamese Tử Vi (Tử Vi Đẩu Số) master reading the chart aloud to the person.
+Formal, classical, warm authority — an elder reading by candlelight, not a modern horoscope app. Address the
+person as "you" throughout. Where it deepens meaning, frame insight through cách cục (named classical formations)
+and the Twelve Palaces. Weave the Sino-Vietnamese palace and star names into the prose, giving a short plain
+meaning the FIRST time each appears (e.g. "your Mệnh — the Palace of Self", "Phá Quân, the Army-Breaker").
+Keep the dignity and imagery of the tradition. Still avoid raw mechanics — no orbs, degrees, house numbers,
+the word "profection", or numeric scores.
+
+TERMINOLOGY — use these Sino-Vietnamese forms (translate the English palace/star names from the digests above):
+Palaces: Mệnh (Self/Destiny), Phụ Mẫu (Parents), Phúc Đức (Fortune/Blessings), Điền Trạch (Property/Land),
+Quan Lộc (Career), Nô Bộc (Friends/Associates), Thiên Di (Travel/Migration), Tật Ách (Health/Affliction),
+Tài Bạch (Wealth), Tử Tức (Children), Phu Thê (Spouse), Huynh Đệ (Siblings).
+Stars: Tử Vi (Emperor), Thiên Cơ (Strategist), Thái Dương (Sun), Vũ Khúc (Martial-Wealth), Thiên Đồng (Harmony),
+Liêm Trinh (Integrity), Thiên Phủ (Treasury), Thái Âm (Moon), Tham Lang (Greedy Wolf), Cự Môn (Great Gate),
+Thiên Tướng (Minister), Thiên Lương (Sage), Thất Sát (Seven Killings), Phá Quân (Army-Breaker).
+Soul element = Nạp Âm. "Gold in the Sea" = Hải Trung Kim.
+
+PORTRAIT — all 8 fields, ~150-200 words each, addressed to "you", in the Tử Vi master's voice.
+"soul_element" MUST open by naming the Nạp Âm image and what it makes you — the mandatory opening frame of the
+whole reading.
 
 ERA_NARRATIVES — return EXACTLY one entry per era below, in order. ~250-300 words each,
-second-person, grounded in that era's signal highlights. Match these keys exactly:
+in the Tử Vi master's voice, grounded in that era's signal highlights. Match these keys exactly:
 {era_spec}
 
 LANDMARK_NARRATIVES — return EXACTLY one entry per landmark below. ~100-150 words each,
-focused on that single year's event. Match these:
+in the same master's voice, focused on that single year's event. Match these:
 {lm_spec}
 
 GROUNDING: every claim must trace to a signal in the digests above. Do not invent
