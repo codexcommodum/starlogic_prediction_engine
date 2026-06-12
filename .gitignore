@@ -8,3 +8,5 @@ venv/
 
 # Local ad-hoc test scripts (not formal tests — those go in tests/)
 _test_*.py
+
+validate_local.py

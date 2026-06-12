@@ -58,6 +58,7 @@ def build_year_narratives_array(all_years: List[dict]) -> List[dict]:
     theme, confidence, headline, action, tone, evidence_keys)."""
     out = []
     for y in all_years:
+        es = y.get("event_signals") or {}
         out.append({
             "age": y.get("age"),
             "year": y.get("year"),
@@ -65,6 +66,13 @@ def build_year_narratives_array(all_years: List[dict]) -> List[dict]:
             "warnings": y.get("warnings", []),
             "compression_year": bool(y.get("compression_year", False)),
             "confidence": y.get("confidence", "NONE"),
+            # Additive: ranked event classes from the activation layer
+            "event_classes": [
+                {"class": c.get("class"), "score": c.get("score"),
+                 "direction": c.get("direction")}
+                for c in (es.get("classes") or [])[:3]
+            ],
+            "is_pivotal": bool(es.get("is_pivotal", False)),
         })
     return out
 
@@ -145,11 +153,33 @@ def _landmark_score(y: dict) -> float:
         if d.get("domain") in ("major_event", "major_transition") and d.get("confidence") == "HIGH":
             score += 1.5
             break
+    # Event signals (star archetype x sihua x annual role) dominate when
+    # available — they are the calibrated event-grade signatures.
+    es = y.get("event_signals") or {}
+    if es.get("available"):
+        classes = es.get("classes") or []
+        if classes:
+            score += min(classes[0].get("score", 0.0), 10.0) * 0.8
+        if es.get("is_pivotal"):
+            score += 2.0
+        if any("MULTI-CHARGE" in ev for c in classes for ev in c.get("evidence", [])):
+            score += 2.0
+        # Tiebreak: total activation load (prevents identical capped scores)
+        score += min(es.get("activation_load", 0.0), 30.0) * 0.04
     return score
 
 
 def _landmark_reasons(y: dict) -> List[str]:
     reasons = []
+    # Event-signature evidence first — the most specific, calibrated layer.
+    es = y.get("event_signals") or {}
+    for c in (es.get("classes") or [])[:2]:
+        label = c.get("class", "").replace("_", " ")
+        reasons.append(f"{label} ({c.get('direction','')})")
+        if c.get("evidence"):
+            reasons.append(c["evidence"][0])
+    if es.get("is_pivotal"):
+        reasons.append("decade stem meets year stem — once-per-decade activation")
     conv = y.get("convergence", {}) or {}
     hc = conv.get("high_confidence_count", 0) or 0
     if y.get("compression_year"):
@@ -189,10 +219,14 @@ def build_landmarks(all_years: List[dict], current_age: int,
 
     out = []
     for y, sc in ordered:
+        es = y.get("event_signals") or {}
+        es_classes = [c.get("class", "").replace("_", " ")
+                      for c in (es.get("classes") or [])[:2]]
         themes = [t["theme"].replace("_", " ")
                   for t in y.get("themes", [])
                   if t.get("confidence") in ("HIGH", "MEDIUM")][:2]
-        summary = f"Age {y['age']} ({y['year']}): " + (", ".join(themes) if themes else "a defining year")
+        lead = es_classes or themes
+        summary = f"Age {y['age']} ({y['year']}): " + (", ".join(lead) if lead else "a defining year")
         out.append({
             "age": y["age"],
             "year": y["year"],

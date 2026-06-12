@@ -21,6 +21,7 @@ import asyncio
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
 from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
 from theme_bridge import build_year_themes, is_compression_year
+from event_signals import compute_event_signals, flag_compression_years
 from narrative_bridge import build_year_narratives
 from natal_sihua import compute_natal_sihua_layer, contribute_natal_sihua_scores
 from bridge_format import build_year_narratives_array, build_eras, build_landmarks
@@ -402,13 +403,22 @@ def compute_activated_aspects(profection: dict, hellenistic: dict) -> list:
 # LAYER 4: ANNUAL PALACE + STARS
 # ═══════════════════════════════════════════════════════════
 
+def find_annual_entry(year: int, zwds: dict, birth_year: int) -> dict:
+    """Return the raw enriched annuals[] entry for a year (or {})."""
+    age = year - birth_year
+    for a in zwds.get("annuals", []):
+        if a.get("year") == year or a.get("age") == age:
+            return a
+    return {}
+
+
 def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
     """Find the ZWDS annual palace for a given year."""
     annuals = zwds.get("annuals", [])
     age = year - birth_year
 
     for a in annuals:
-        if a.get("age") == age or a.get("year") == year:
+        if a.get("year") == year or a.get("age") == age:
             palace_name = a.get("palace_name_english", "")
             # Parse stars - pinyin is reliable (underscore-separated names, space between stars)
             stars_pinyin_raw = a.get("stars", "")
@@ -454,12 +464,19 @@ def compute_annual_palace(year: int, zwds: dict, birth_year: int) -> dict:
 # ═══════════════════════════════════════════════════════════
 
 def compute_decade_palace(age: int, zwds: dict) -> dict:
-    """Find the ZWDS decade palace for a given age."""
+    """Find the ZWDS decade palace for a given age (Western).
+
+    The ZWDS engine emits decade windows in 虚岁 (xu sui, birth=1) per
+    canon. Enriched payloads also carry explicit *_western fields; for
+    legacy payloads convert (western = xu sui - 1). The old code compared
+    Western age directly against xu-sui ranges, which shifted every
+    decade boundary a year late and pulled the wrong decade stem.
+    """
     decades = zwds.get("decades", [])
 
     for d in decades:
-        start = d.get("start_age", 0)
-        end = d.get("end_age", 0)
+        start = d.get("start_age_western", d.get("start_age", 1) - 1)
+        end = d.get("end_age_western", d.get("end_age", 1) - 1)
         if start <= age <= end:
             palace_name = d.get("palace_name_english", "")
             stars_pinyin_raw = d.get("stars", "")
@@ -973,6 +990,19 @@ The nayin visibility property is a TIMING instruction:
 
 Read the person's nayin visibility first; it tells you WHEN to expect the signals to land, not just WHAT.
 
+═══ LAYER 4.5: EVENT SIGNATURES (ACTIVATION — STRONGEST EVIDENCE) ═══
+Where landmark digests carry "Event signatures", these are sihua transformations
+(lu=opening, quan=empowerment, ke=recognition/formalization, ji=knot/obstruction)
+landing in that YEAR'S rotated palaces (annual Spouse, annual Wealth, etc.), read
+through star archetypes. They outrank every other layer in specificity:
+- charged Spouse role = partnership event window (engagement, marriage, key alliance)
+- charged Wealth role with tian_liang = rescue money (insurance, inheritance, bailout)
+- ji on a star carrying birth-year lu = 禄逢冲破, fortune meets its breaker — collapse risk
+- "MULTI-CHARGE" = multiple transformations converging on one role: event-grade, name it plainly
+- "PIVOTAL" = decade stem meets year stem (once per decade): a hinge year
+- direction "charged" = doors opening; "strained" = pressure/loss; "volatile" = both at once
+Name the event class concretely in the narrative; do not dilute it into generic fortune talk.
+
 ═══ LAYER 5: DECADE PALACE (BACKGROUND THEME) ═══
 Sets the ~10-year backdrop. Every year within plays against this backdrop.
 - TRANSITION_IN (first year) = decade energy arriving
@@ -1063,9 +1093,20 @@ The star-palace EFFECTS above are already age-calibrated. This guide is only for
                for o in y.get("opportunities", []) if o.get("confidence") in ("HIGH", "MEDIUM")]
         wns = [f"[{w['confidence']}] {w['theme']} — {w['headline']}"
                for w in y.get("warnings", []) if w.get("confidence") in ("HIGH", "MEDIUM")]
+        # Activation layer: the calibrated event signatures for this year.
+        es = y.get("event_signals") or {}
+        ev_lines = []
+        for c in (es.get("classes") or [])[:3]:
+            ev = "; ".join(c.get("evidence", [])[:2])
+            ev_lines.append(f"{c['class'].replace('_',' ')} [{c.get('direction','')}, "
+                            f"score {c.get('score')}]: {ev}")
+        if es.get("is_pivotal"):
+            ev_lines.append("PIVOTAL: decade stem meets year stem — once-per-decade activation")
         lm_lines.append(
             f"\n--- LANDMARK age {lm['age']} ({lm['year']}) [{lm['tense']}] ---\n"
             f"Why it matters: {', '.join(lm.get('reasons') or [])}\n"
+            f"Event signatures (the most specific evidence — lead with these): "
+            f"{' | '.join(ev_lines) if ev_lines else 'none'}\n"
             f"Opportunities: {'; '.join(ops) if ops else 'none'}\n"
             f"Warnings: {'; '.join(wns) if wns else 'none'}"
         )
@@ -1262,6 +1303,11 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         history[age] = year_data
         year_data["cycles"] = detect_cycles(age, history)
         year_data["convergence"] = score_convergence(year_data, natal_sihua_layer)
+        # Event-class detection from the enriched ZWDS annual entry:
+        # star archetype x sihua type x annual role. This is what themes
+        # a year by what ACTIVATES rather than where it lands.
+        year_data["event_signals"] = compute_event_signals(
+            find_annual_entry(year, zwds, birth_year), age)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
@@ -1280,6 +1326,10 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         else:
             year_data["confidence"] = "NONE"
         all_years.append(year_data)
+
+    # Relative, per-person compression flags (overrides the absolute rule
+    # when enriched data is available — fixes the always-on badge).
+    flag_compression_years(all_years)
 
     # ── Additive bridge layer: reshape signals into the frontend contract ──
     current_age = datetime.now().year - birth_year
@@ -1399,6 +1449,8 @@ async def get_signals(data: BirthInput):
         history[age] = year_data
         year_data["cycles"] = detect_cycles(age, history)
         year_data["convergence"] = score_convergence(year_data, natal_sihua_layer)
+        year_data["event_signals"] = compute_event_signals(
+            find_annual_entry(year, zwds, birth_year), age)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
         year_data["compression_year"] = is_compression_year(year_data["themes"])
@@ -1417,6 +1469,8 @@ async def get_signals(data: BirthInput):
         else:
             year_data["confidence"] = "NONE"
         all_years.append(year_data)
+
+    flag_compression_years(all_years)
 
     return {"longevity": longevity, "signals": all_years}
 
