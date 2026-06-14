@@ -21,7 +21,7 @@ import asyncio
 from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
 from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
 from theme_bridge import build_year_themes, is_compression_year
-from event_signals import compute_event_signals, flag_compression_years
+from event_signals import compute_event_signals, flag_compression_years, reconcile_themes_with_events
 from narrative_bridge import build_year_narratives
 from natal_sihua import compute_natal_sihua_layer, contribute_natal_sihua_scores
 from bridge_format import build_year_narratives_array, build_eras, build_landmarks
@@ -1310,6 +1310,7 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
             find_annual_entry(year, zwds, birth_year), age)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
+        year_data["themes"] = reconcile_themes_with_events(year_data["themes"], year_data["event_signals"], age)
         year_data["compression_year"] = is_compression_year(year_data["themes"])
         # Narrative bridge: structured opportunities/warnings for Base44 LLM
         _narratives = build_year_narratives(year_data["themes"], year_data["convergence"], year_data)
@@ -1453,6 +1454,7 @@ async def get_signals(data: BirthInput):
             find_annual_entry(year, zwds, birth_year), age)
         # New theme-bridge layer: ZWDS-led themes validated by Hellenistic
         year_data["themes"] = build_year_themes(year_data, natal_palaces=zwds.get("palaces", []), natal_planets=hellenistic.get("planets", []))
+        year_data["themes"] = reconcile_themes_with_events(year_data["themes"], year_data["event_signals"], age)
         year_data["compression_year"] = is_compression_year(year_data["themes"])
         # Narrative bridge: structured opportunities/warnings for Base44 LLM
         _narratives = build_year_narratives(year_data["themes"], year_data["convergence"], year_data)

@@ -290,3 +290,79 @@ def flag_compression_years(all_years: list) -> None:
         es = y.get("event_signals") or {}
         if es.get("available"):
             y["compression_year"] = es.get("activation_load", 0.0) >= threshold
+
+
+# ── Event→theme reconciliation ──────────────────────────────────────
+# Maps the activation layer's event classes onto the older theme_bridge
+# vocabulary so a calibrated event signature can ELEVATE (never demote)
+# its matching theme. This is the bridge that lets the fixed detection
+# layer actually surface in the user-facing narration, ConvergenceYear,
+# year_narratives, era digests, and the confidence string.
+EVENT_CLASS_TO_THEME = {
+    "partnership": "partnership",
+    "wealth": "wealth_gain",
+    "windfall_rescue": "wealth_gain",
+    "career": "career_pivot",
+    "recognition": "career_pivot",
+    "relocation_movement": "uprooting_travel",
+    "home_property": "property_home",
+    "network": "friends_network",
+    "siblings_allies": "friends_network",
+    "children": "creative_children",
+    "health": "health_event",
+    "identity": "identity_self",
+    "parents_authority": "family_parents",
+    "mother_daughters": "family_parents",
+    "father_authority": "family_parents",
+    "inner_life": "hidden_endings",
+}
+
+_CONF_RANK = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3}
+
+
+def reconcile_themes_with_events(themes: list, event_signals: dict, age: int,
+                                 medium_floor: float = 5.0,
+                                 high_floor: float = 7.0) -> list:
+    """Let strong event signatures elevate their mapped theme. Elevate-only:
+    never lowers an existing theme's confidence or removes one. Inserts a
+    theme (event-backed) only when a strong signature has no theme yet.
+    Falls back to the input unchanged on legacy/empty payloads."""
+    es = event_signals or {}
+    if not es.get("available"):
+        return themes
+    themes = list(themes or [])
+    by_theme = {t.get("theme"): t for t in themes}
+    for c in (es.get("classes") or [])[:3]:
+        score = float(c.get("score", 0) or 0)
+        if score < medium_floor:
+            continue
+        theme_name = EVENT_CLASS_TO_THEME.get(c.get("class"))
+        if not theme_name:
+            continue
+        conf = "HIGH" if score >= high_floor else "MEDIUM"
+        ev = (c.get("evidence") or [])[:2]
+        existing = by_theme.get(theme_name)
+        if existing:
+            if _CONF_RANK[conf] > _CONF_RANK.get(existing.get("confidence", "LOW"), 0):
+                existing["confidence"] = conf
+            # carry event evidence + a sort boost so the event-backed theme leads
+            existing["event_backed"] = True
+            existing["zwds_score"] = max(existing.get("zwds_score", 0.0), score)
+            if ev:
+                existing.setdefault("zwds_evidence", [])
+                existing["zwds_evidence"] = ev + [e for e in existing["zwds_evidence"] if e not in ev]
+        else:
+            new_t = {
+                "theme": theme_name,
+                "confidence": conf,
+                "zwds_score": score,
+                "zwds_evidence": ev,
+                "hellenistic_strength": "NONE",
+                "hellenistic_evidence": [],
+                "event_backed": True,
+            }
+            themes.append(new_t)
+            by_theme[theme_name] = new_t
+    themes.sort(key=lambda r: (-_CONF_RANK.get(r.get("confidence", "LOW"), 0),
+                               -float(r.get("zwds_score", 0) or 0)))
+    return themes
