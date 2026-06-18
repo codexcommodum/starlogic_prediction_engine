@@ -1663,26 +1663,48 @@ def _build_tier_extras(tier: str, hot_domains: list, zwds_score: dict, hell_modi
     }
 
 
-def _year_phase_modifier(zwds: dict, birth_year: int, year: int) -> int:
-    """Tier shift (-2..+2) from the year's event-signal valence, so days inside a
-    strained (hard) year skew down and days inside a charged year skew up. This is
-    what makes the daily score life-phase-aware instead of a fixed repeating cycle.
-    Falls back to 0 on legacy/empty payloads."""
-    try:
-        age = year - birth_year
-        es = compute_event_signals(find_annual_entry(year, zwds, birth_year), age)
-    except Exception:
-        return 0
-    if not es.get("available"):
-        return 0
-    charge = sum(c.get("charge", 0.0) for c in es.get("classes", []))
-    strain = sum(c.get("strain", 0.0) for c in es.get("classes", []))
-    net = charge - strain
-    if net >= 8: return 2
-    if net >= 3: return 1
-    if net <= -8: return -2
-    if net <= -3: return -1
-    return 0
+def _year_phase_modifiers(zwds: dict, birth_year: int) -> dict:
+    """Per-person RELATIVE life-phase modifier for every year -> {year: shift(-2..+2)}.
+    Ranks each year's event-signal valence (charge - strain) across the whole life and
+    assigns the tier shift by percentile, so a person's relatively hard years skew their
+    days down and strong years skew up. Relative (not absolute) on purpose: event
+    detection is charge-biased, so the absolute net is almost always positive and only
+    ranking reveals the hard years. Same fix pattern as flag_compression_years."""
+    vals = {}
+    for a in zwds.get("annuals", []) or []:
+        y = a.get("year")
+        if y is None:
+            continue
+        try:
+            es = compute_event_signals(a, y - birth_year)
+        except Exception:
+            continue
+        if not es.get("available"):
+            continue
+        charge = sum(c.get("charge", 0.0) for c in es.get("classes", []))
+        strain = sum(c.get("strain", 0.0) for c in es.get("classes", []))
+        vals[y] = charge - strain
+    if len(vals) < 8:
+        return {}
+    ranked = sorted(vals.values())
+    n = len(ranked)
+    lo2 = ranked[int(n * 0.12)]
+    lo1 = ranked[int(n * 0.30)]
+    hi1 = ranked[min(n - 1, int(n * 0.70))]
+    hi2 = ranked[min(n - 1, int(n * 0.88))]
+    out = {}
+    for y, v in vals.items():
+        if v <= lo2:
+            out[y] = -2
+        elif v <= lo1:
+            out[y] = -1
+        elif v >= hi2:
+            out[y] = 2
+        elif v >= hi1:
+            out[y] = 1
+        else:
+            out[y] = 0
+    return out
 
 
 async def _compute_daily_tier(
@@ -1790,7 +1812,7 @@ async def daily_tier(data: DailyTierRequest):
         try:
             _cr = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
             if _cr.status_code == 200:
-                _ymod = _year_phase_modifier(_cr.json(), birth_year, _ty)
+                _ymod = _year_phase_modifiers(_cr.json(), birth_year).get(_ty, 0)
         except Exception:
             _ymod = 0
         return await _compute_daily_tier(
@@ -1840,11 +1862,7 @@ async def forecast_365(data: Forecast365Request):
         try:
             _cr = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
             if _cr.status_code == 200:
-                _zw = _cr.json()
-                for _d in target_dates:
-                    _y = int(_d[:4])
-                    if _y not in year_mods:
-                        year_mods[_y] = _year_phase_modifier(_zw, birth_year, _y)
+                year_mods = _year_phase_modifiers(_cr.json(), birth_year)
         except Exception:
             year_mods = {}
 
