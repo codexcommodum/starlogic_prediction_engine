@@ -1491,6 +1491,7 @@ async def get_longevity(data: BirthInput):
 # ═══════════════════════════════════════════════════════════════════════════
 
 TIER_LADDER = ["Worst", "Bad", "Caution", "Fair", "Good", "Great", "Excellent"]
+DAILY_NET_BASELINE = 1  # subtracted from raw ZWDS daily net to de-bias optimism (tunable)
 
 GENERIC_TIER_ADVICE = {
     "Excellent": "Make the move. Today the chart is aligned and major decisions land cleanly.",
@@ -1503,10 +1504,10 @@ GENERIC_TIER_ADVICE = {
 }
 
 
-def _zwds_base_tier(zwds_daily: dict, year_confidence: str = None) -> str:
+def _zwds_base_tier(zwds_daily: dict, year_confidence: str = None, net_offset: int = 0) -> str:
     """ZWDS daily score -> base tier. ZWDS is the primary signal source."""
     s = zwds_daily.get("score", {})
-    net = s.get("net", 0)
+    net = s.get("net", 0) + net_offset
     active_fav = s.get("active_palace_favorable", 0)
 
     if net >= 4 and active_fav >= 1:
@@ -1662,6 +1663,28 @@ def _build_tier_extras(tier: str, hot_domains: list, zwds_score: dict, hell_modi
     }
 
 
+def _year_phase_modifier(zwds: dict, birth_year: int, year: int) -> int:
+    """Tier shift (-2..+2) from the year's event-signal valence, so days inside a
+    strained (hard) year skew down and days inside a charged year skew up. This is
+    what makes the daily score life-phase-aware instead of a fixed repeating cycle.
+    Falls back to 0 on legacy/empty payloads."""
+    try:
+        age = year - birth_year
+        es = compute_event_signals(find_annual_entry(year, zwds, birth_year), age)
+    except Exception:
+        return 0
+    if not es.get("available"):
+        return 0
+    charge = sum(c.get("charge", 0.0) for c in es.get("classes", []))
+    strain = sum(c.get("strain", 0.0) for c in es.get("classes", []))
+    net = charge - strain
+    if net >= 8: return 2
+    if net >= 3: return 1
+    if net <= -8: return -2
+    if net <= -3: return -1
+    return 0
+
+
 async def _compute_daily_tier(
     client: httpx.AsyncClient,
     birth_data: dict,
@@ -1670,6 +1693,7 @@ async def _compute_daily_tier(
     target_lat: float = None,
     target_lon: float = None,
     target_tz: float = None,
+    year_modifier: int = 0,
 ) -> dict:
     """One day's tier computation. Calls both sub-engines /daily endpoints."""
     zwds_payload = {**birth_data, "target_date": target_date}
@@ -1692,9 +1716,9 @@ async def _compute_daily_tier(
     zwds = zwds_resp.json()
     hell = hell_resp.json()
 
-    base_tier = _zwds_base_tier(zwds, year_confidence)
+    base_tier = _zwds_base_tier(zwds, year_confidence, net_offset=-DAILY_NET_BASELINE)
     modifier = _hellenistic_modifier(hell)
-    final_tier = _shift_tier(base_tier, modifier)
+    final_tier = _shift_tier(base_tier, modifier + year_modifier)
 
     # Hot domains for tailored advice (Pro tier consumes this)
     hot_domains = []
@@ -1717,6 +1741,7 @@ async def _compute_daily_tier(
         **extras,
         "base_tier_from_zwds": base_tier,
         "hellenistic_modifier": modifier,
+        "year_modifier": year_modifier,
         "advice": GENERIC_TIER_ADVICE[final_tier],
         "day_boundary": {
             "sunrise_utc": hell.get("sunrise_utc"),
@@ -1758,13 +1783,23 @@ async def daily_tier(data: DailyTierRequest):
         "longitude": data.longitude,
         "timezone_offset": data.timezone_offset,
     }
+    birth_year = int(data.birth_date.split("-")[0])
+    _ty = int(data.target_date[:4])
     async with httpx.AsyncClient(timeout=30.0) as client:
+        _ymod = 0
+        try:
+            _cr = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
+            if _cr.status_code == 200:
+                _ymod = _year_phase_modifier(_cr.json(), birth_year, _ty)
+        except Exception:
+            _ymod = 0
         return await _compute_daily_tier(
             client, birth_data, data.target_date,
             year_confidence=data.year_confidence,
             target_lat=data.target_latitude,
             target_lon=data.target_longitude,
             target_tz=data.target_timezone_offset,
+            year_modifier=_ymod,
         )
 
 
@@ -1798,7 +1833,21 @@ async def forecast_365(data: Forecast365Request):
 
     # Limit concurrency to avoid hammering sub-engines
     semaphore = asyncio.Semaphore(8)
+    birth_year = int(data.birth_date.split("-")[0])
     async with httpx.AsyncClient(timeout=30.0) as client:
+        # Fetch the ZWDS chart once for year-phase context (life-phase awareness).
+        year_mods = {}
+        try:
+            _cr = await client.post(f"{ZWDS_URL}/chart", json=birth_data)
+            if _cr.status_code == 200:
+                _zw = _cr.json()
+                for _d in target_dates:
+                    _y = int(_d[:4])
+                    if _y not in year_mods:
+                        year_mods[_y] = _year_phase_modifier(_zw, birth_year, _y)
+        except Exception:
+            year_mods = {}
+
         async def one(td):
             async with semaphore:
                 try:
@@ -1807,6 +1856,7 @@ async def forecast_365(data: Forecast365Request):
                         target_lat=data.target_latitude,
                         target_lon=data.target_longitude,
                         target_tz=data.target_timezone_offset,
+                        year_modifier=year_mods.get(int(td[:4]), 0),
                     )
                 except Exception as e:
                     return {"target_date": td, "error": str(e)[:200]}
