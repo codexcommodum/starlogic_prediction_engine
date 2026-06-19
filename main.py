@@ -22,6 +22,7 @@ from star_palace_age_effects import get_star_palace_age_effect, get_age_bracket
 from clarifying_questions import generate_clarifying_questions, format_answers_for_llm
 from theme_bridge import build_year_themes, is_compression_year
 from event_signals import compute_event_signals, flag_compression_years, reconcile_themes_with_events
+from structural_risk import detect_structural_risks, structural_risk_prompt_block
 from narrative_bridge import build_year_narratives
 from natal_sihua import compute_natal_sihua_layer, contribute_natal_sihua_scores
 from bridge_format import build_year_narratives_array, build_eras, build_landmarks
@@ -1341,7 +1342,9 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
     # Build LLM prompt (for Base44 InvokeLLM) — JSON synthesis output
     questions = generate_clarifying_questions(nayin_data, hellenistic, zwds)
     user_stance = format_answers_for_llm(questions, clarifying_answers) if clarifying_answers else ""
+    structural_risks = detect_structural_risks(zwds)
     llm_prompt = build_llm_prompt(all_years, nayin_data, longevity, eras, landmarks, current_age, user_stance)
+    llm_prompt = llm_prompt + structural_risk_prompt_block(structural_risks)
 
     result = {
         "birth_data": birth_data,
@@ -1363,6 +1366,7 @@ async def run_prediction_engine(birth_data: dict, clarifying_answers: dict = Non
         "year_narratives": year_narratives,
         "eras": eras,
         "landmarks": landmarks,
+        "structural_risks": structural_risks,
         "llm_prompt": llm_prompt,
     }
 
@@ -1579,7 +1583,7 @@ TIER_SUMMARY_PREFIX = {
 
 # Favorable activities by domain (palace english name, lowercased)
 DOMAIN_FAVORABLE = {
-    "fortune":  ["pursue luck-dependent ventures", "make the bold ask", "play your hunches"],
+    "fortune":  ["invest in your peace of mind", "lean into gratitude", "tend what restores you"],
     "wealth":   ["review investments", "negotiate prices", "make planned purchases"],
     "career":   ["sign contracts", "make the pitch", "ask for the raise"],
     "spouse":   ["plan with your partner", "deepen the conversation", "make commitments"],
