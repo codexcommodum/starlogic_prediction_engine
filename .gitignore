@@ -10,3 +10,4 @@ venv/
 _test_*.py
 
 validate_local.py
+spotcheck_local.py
